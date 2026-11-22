@@ -801,6 +801,12 @@ if view == "check":
                 if (pr is None) != (s["printed"] is None) or (pr is not None and r2(pr) != s["printed"]):
                     q("UPDATE mum_sources SET printed=%s WHERE id=%s", (None if pr is None else r2(pr), s["id"]))
                     st.rerun()
+                if diff is None and not open_ls:
+                    st.caption("Some statements (for example bank account statements) do not print a total of money out. "
+                               "If you have checked every line against the statement, you can confirm it instead.")
+                    if st.button("This statement has no total: I've checked every line", key=f"nototal{sid}"):
+                        q("UPDATE mum_sources SET printed=%s WHERE id=%s", (r2(s.get("doc", s["read"])), s["id"]))
+                        st.rerun()
             with st.container(key=f"rows{sid}"):
                 for l in open_ls:
                     lid = l["id"]
