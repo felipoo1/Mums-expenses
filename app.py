@@ -124,6 +124,9 @@ td{padding:7px 6px;border-bottom:1px solid var(--line)}
 [class*="st-key-rows"] [data-baseweb="select"]>div{min-height:40px;font-size:14px!important}
 [class*="st-key-rows"] button{min-height:40px!important;padding:0 4px!important}
 [data-testid="stSidebar"],[data-testid="stSidebarCollapsedControl"]{display:none!important}
+[class*="st-key-card"][class*="_bad"]{border:2px solid var(--bad)!important;background:#fff7f6!important;border-radius:14px}
+.badnote{background:#fde8e7;color:var(--bad);font-weight:600;padding:8px 12px;border-radius:8px;margin-bottom:6px}
+.stButton button:disabled{opacity:.35!important}
 /* section menu */
 .st-key-nav [data-testid="stButtonGroup"] button{min-height:44px;font-weight:600}
 @media (prefers-reduced-motion:reduce){.bar .t i{transition:none}}
@@ -460,6 +463,13 @@ def save_reading(m, kind, name, fhash, j, rules):
     return printed, per_month
 
 
+def off_text(diff):
+    """Explain a statement mismatch in plain words. diff = printed total - total of lines."""
+    if diff > 0:
+        return f"lines are {money(diff)} LESS than the statement (a line may be missing)"
+    return f"lines are {money(-diff)} MORE than the statement (an extra or double line, or a wrong amount)"
+
+
 def ym(d):
     return f"{d.year}-{d.month:02d}"
 
@@ -734,6 +744,15 @@ if view == "check":
     if man:
         groups.append(({"id": None, "label": "Added by hand", "period": "", "printed": None, "diff": None,
                         "read": r2(sum(l["amt"] for l in man))}, man))
+    def _needs(item):
+        s, ls = item
+        bad_total = s["id"] is not None and s.get("diff") != 0
+        return (0 if bad_total else 1)
+    groups.sort(key=_needs)
+    off = [s for s, _ in groups if s["id"] is not None and s.get("diff") not in (None, 0)]
+    if off:
+        st.error("⚠ " + "; ".join(f"{s['label']}: {off_text(s['diff'])}" for s in off)
+                 + ". Shown first below.")
     finished = []
     for s, ls in groups:
         sid = s["id"] if s["id"] is not None else "man"
@@ -745,7 +764,12 @@ if view == "check":
         if not open_ls and (s["id"] is None or diff == 0):
             finished.append((s, done_ls))      # nothing left to do: not shown under Check
             continue
-        with st.container(border=True):
+        mismatch = s["id"] is not None and diff is not None and diff != 0
+        with st.container(border=True, key=f"card{sid}" + ("_bad" if mismatch else "")):
+            if mismatch:
+                st.markdown(f"<div class='badnote'>⚠ Does not match: {off_text(diff)}. "
+                            f"Also check the printed total is typed correctly.</div>",
+                            unsafe_allow_html=True)
             hd, mn = st.container(key=f"hdr{sid}").columns([5, 1], vertical_alignment="center")
             hd.markdown(f"#### {s['label']}" + (f" <span class='muted'>· {s['period']}</span>" if s.get("period") else ""),
                         unsafe_allow_html=True)
@@ -765,7 +789,7 @@ if view == "check":
             # statement total line
             status = ("" if s["id"] is None else
                       "<span class='bad'>type the printed total</span>" if diff is None else
-                      f"<span class='{'ok' if diff == 0 else 'bad'}'>{'✓ matches' if diff == 0 else 'off by ' + money(diff)}</span>")
+                      f"<span class='{'ok' if diff == 0 else 'bad'}'>{'✓ matches' if diff == 0 else 'does not match'}</span>")
             st.markdown(f"<span class='ok'>✓ {len(done_ls)} done</span> · {money(sum(l['amt'] for l in done_ls))}"
                         + (f" &nbsp;·&nbsp; <b>{len(open_ls)} to do</b>" if open_ls else "")
                         + (f"<br>{'Whole document (' + month_name(s['m1']) + ' to ' + month_name(s['m2']) + ')' if spans else 'Lines total'} "
@@ -867,29 +891,74 @@ if view == "check":
 if view == "year":
     y = cur[:4]
     st.subheader(f"Monthly breakdown for {y}")
+    # Same calculation as each month's reconciliation total (totals()), so the numbers always agree.
     allm = q("SELECT month,cash FROM mum_months WHERE month LIKE %s", (y + "-%",), True)
     cashmap = {r["month"]: float(r["cash"]) for r in allm}
-    agg = q("""SELECT month,cat,SUM(amt) s, COUNT(*) n, BOOL_AND(done AND ok AND cat<>'') allok
-               FROM mum_lines WHERE month LIKE %s GROUP BY month,cat""", (y + "-%",), True)
+    ylines = q("SELECT month, cat, amt, ok, dup, source_id FROM mum_lines WHERE month LIKE %s", (y + "-%",), True)
+    for l in ylines:
+        l["amt"] = float(l["amt"])
+    # each statement's whole total vs its printed total
+    docs = {r["id"]: r for r in q("""SELECT s.id, s.label, s.printed, COALESCE(SUM(l.amt), 0) AS total
+                                      FROM mum_sources s LEFT JOIN mum_lines l ON l.source_id = s.id
+                                      GROUP BY s.id, s.label, s.printed""", fetch=True)}
+    def doc_problem(d):
+        return d["printed"] is None or r2(float(d["printed"]) - float(d["total"])) != 0
+    problems = []
     rows = []
     for mo in range(1, 13):
         k = f"{y}-{mo:02d}"
-        got = [a for a in agg if a["month"] == k]
-        if not got:
-            rows.append({"Month": MN[mo - 1][:3], **{c: None for c in ALLK}, "Total": None})
+        ml = [l for l in ylines if l["month"] == k]
+        if not ml and k not in cashmap and k != cur:
+            rows.append({"Month": MN[mo - 1][:3], **{c: None for c in ALLK}, "Total": None, "Status": ""})
             continue
-        vals = {c: 0.0 for c in ALLK}
-        for a in got:
-            if a["cat"] in vals:
-                vals[a["cat"]] += float(a["s"])
-        vals["G"] += cashmap.get(k, DEFAULT_CASH)
-        rows.append({"Month": MN[mo - 1][:3], **{c: r2(v) for c, v in vals.items()}, "Total": r2(sum(vals.values()))})
+        mt, mc, mspend = totals(cashmap.get(k, DEFAULT_CASH), ml)
+        left = sum(1 for l in ml if not l["ok"] and not l["dup"])
+        bad = sorted({docs[l["source_id"]]["label"] for l in ml
+                      if l["source_id"] in docs and doc_problem(docs[l["source_id"]])})
+        if not ml:
+            status = "no lines yet"
+        elif bad:
+            status = "✗ total does not match"
+        elif left:
+            status = f"{left} to check"
+        else:
+            status = "✓ reconciled"
+        if bad or left:
+            problems.append((k, bad, left))
+        rows.append({"Month": MN[mo - 1][:3], **{c: mt[c] for c in ALLK}, "Total": mspend, "Status": status})
+    if problems:
+        st.error(f"⚠ {len(problems)} month(s) need attention")
+        for k, bad, left in problems:
+            a, b = st.columns([4, 1], vertical_alignment="center")
+            why = []
+            if bad:
+                why.append("statement total does not match: " + ", ".join(bad))
+            if left:
+                why.append(f"{left} line(s) to check")
+            a.markdown(f"**{month_name(k)}** · <span class='bad'>{'; '.join(why)}</span>", unsafe_allow_html=True)
+            b.button("Open", key=f"go{k}", width="stretch",
+                     on_click=lambda k=k: st.session_state.update(month=k, pick_m=MN[int(k[5:]) - 1],
+                                                                  pick_y=int(k[:4]), view="check"))
+    else:
+        st.success("✓ Every month with data is reconciled.")
     df = pd.DataFrame(rows)
+    for c in ALLK + ["Total"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
     tot = {"Month": "Year", **{c: r2(df[c].fillna(0).sum()) for c in ALLK}, "Total": r2(df["Total"].fillna(0).sum())}
     df = pd.concat([df, pd.DataFrame([tot])], ignore_index=True)
-    st.dataframe(df, hide_index=True, width="stretch",
-                 column_config={c: st.column_config.NumberColumn(c, format="$%.2f") for c in ALLK + ["Total"]})
-    st.caption("S Susan · F Family food · T Transport · G Groceries (incl. cash) · U Utilities · M Medical · H Household. Empty months show blank.")
+    def _hl(row):
+        s = str(row.get("Status", ""))
+        bg = "background-color:#fde8e7;color:#b4231d;font-weight:600" if s.startswith("✗") else \
+             "background-color:#fff4e5" if "to check" in s else ""
+        return [bg] * len(row)
+    disp = df.copy()
+    for c in ALLK + ["Total"]:
+        disp[c] = df[c].map(lambda v: "" if pd.isna(v) else f"${v:,.2f}")
+    disp["Status"] = disp["Status"].fillna("")
+    st.dataframe(disp.style.apply(_hl, axis=1).set_properties(subset=ALLK + ["Total"], **{"text-align": "right"}),
+                 hide_index=True, width="stretch")
+    st.caption("Each month's Total is the same figure as that month's reconciliation total (including the cash for groceries). "
+               "S Susan · F Family food · T Transport · G Groceries (incl. cash) · U Utilities · M Medical · H Household. Empty months show blank.")
     st.download_button("Download year CSV", df.to_csv(index=False), file_name=f"Mum spend {y} by month.csv", mime="text/csv")
 
 # ---------------------------------------------------------------- all records (whole database)
