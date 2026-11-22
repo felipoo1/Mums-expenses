@@ -451,6 +451,8 @@ def save_reading(m, kind, name, fhash, j, rules):
             if amt <= 0:
                 continue
             desc = str(l.get("desc") or "")
+            if MONEY_IN.search(desc):   # safety net: card bill payments, refunds, credits are money IN, never counted
+                continue
             sug = str(l.get("cat") or "").strip().upper()
             cat = rules.get(merch(desc)) or (sug if sug in CAT_OPTIONS else "")
             d = safe_date(l.get("date"), m)
@@ -468,6 +470,9 @@ def off_text(diff):
     if diff > 0:
         return f"lines are {money(diff)} LESS than the statement (a line may be missing)"
     return f"lines are {money(-diff)} MORE than the statement (an extra or double line, or a wrong amount)"
+
+
+MONEY_IN = re.compile(r"BILL PAYMENT|PAYMENT\s*-?\s*THANK|THANK YOU|REFUND|REVERSAL|CASHBACK|REBATE|INTEREST CREDIT|\bCR\b$", re.I)
 
 
 def ym(d):
