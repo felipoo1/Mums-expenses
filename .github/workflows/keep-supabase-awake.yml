@@ -1,0 +1,46 @@
+name: Keep Supabase awake
+
+# Supabase pauses free projects after about 7 days with no database activity.
+# This runs a real database query every 3 days from GitHub's servers, so it works
+# even while the Streamlit apps are asleep. It keeps the whole Supabase project
+# awake, so it protects the cafe app too.
+on:
+  schedule:
+    - cron: "17 2 */3 * *"   # every 3 days at 10:17am Singapore time
+  workflow_dispatch:          # lets you run it by hand from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run a real database query
+        env:
+          DB: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$DB" ]; then echo "Add SUPABASE_DB_URL in Settings > Secrets and variables > Actions"; exit 1; fi
+          command -v psql >/dev/null || (sudo apt-get update -q && sudo apt-get install -y -q postgresql-client)
+          psql "$DB" -v ON_ERROR_STOP=1 -c "
+            CREATE TABLE IF NOT EXISTS mum_keepalive(id INT PRIMARY KEY, pinged TIMESTAMPTZ);
+            ALTER TABLE mum_keepalive ENABLE ROW LEVEL SECURITY;
+            INSERT INTO mum_keepalive VALUES (1, now()) ON CONFLICT (id) DO UPDATE SET pinged = now();
+            SELECT pinged AS last_ping FROM mum_keepalive;"
+
+      # GitHub switches off scheduled jobs in a repo with no activity for 60 days.
+      # If the last commit is over 50 days old, add a tiny dated note so the schedule stays on.
+      - uses: actions/checkout@v4
+      - name: Keep this schedule switched on
+        run: |
+          age=$(( $(date +%s) - $(git log -1 --format=%ct) ))
+          if [ "$age" -gt 4320000 ]; then
+            date -u +"%Y-%m-%d %H:%M UTC" > .github/last-keepalive.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+            git add .github/last-keepalive.txt
+            git commit -m "Keep-alive note (keeps the 3-day schedule switched on)"
+            git push
+          else
+            echo "Repo active recently, nothing to do."
+          fi
