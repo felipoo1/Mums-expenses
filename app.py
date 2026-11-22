@@ -781,6 +781,21 @@ if view == "check":
                             mark_done([l], False)
                             st.rerun()
                 if s["id"] is not None:
+                    st.markdown("**+ Add a missing line to this statement**")
+                    with st.form(f"addto{sid}", clear_on_submit=True, border=False):
+                        ad = st.date_input("Date", value=date(int(cur[:4]), int(cur[5:]), 1), format="DD/MM/YYYY",
+                                           key=f"ad{sid}")
+                        ads = st.text_input("Description (as on the statement)", key=f"ads{sid}")
+                        aam = st.number_input("Amount $", min_value=0.0, step=0.01, format="%.2f", key=f"aam{sid}")
+                        act = st.selectbox("Letter", CAT_OPTIONS[1:], format_func=cat_label, key=f"act{sid}")
+                        if st.form_submit_button("Add to this statement", type="primary"):
+                            if aam <= 0 or not ads.strip():
+                                st.error("Please fill in a description and an amount.")
+                            else:
+                                q("""INSERT INTO mum_lines(month,source_id,tx_date,descr,amt,cat,ok,done)
+                                     VALUES(%s,%s,%s,%s,%s,%s,TRUE,TRUE)""", (ym(ad), s["id"], ad, ads.strip(), r2(aam), act))
+                                save_rule(ads, act)
+                                st.rerun()
                     st.markdown("**Remove this whole document**")
                     if st.checkbox("Yes, remove it and all its lines", key=f"rmok{sid}"):
                         if st.button("Remove now", key=f"rm{sid}", type="primary"):
