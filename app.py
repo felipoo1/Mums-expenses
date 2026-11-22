@@ -479,24 +479,25 @@ st.markdown("".join(
     f"<i style='width:{T[k] / mx * 100:.1f}%;background:{c}33;border-right:3px solid {c}'></i><span>{n}</span></div>"
     f"<span class='v'>{money(T[k])}</span></div>" for k, (n, c) in CATS.items()), unsafe_allow_html=True)
 if lines:
-    waiting = sum(1 for l in lines if not l["done"])
+    waiting = sum(1 for l in lines if not l["ok"] and not l.get("dup"))
     DOUBLES = find_doubles()
-    unticked = sum(1 for l in lines if l["done"] and not l["ok"])
+    unticked = 0
     bad_docs = sum(1 for s in SI if s["diff"] != 0)
     why = []
     if waiting:
-        why.append(f"{waiting} line(s) still in step 2")
+        why.append(f"{waiting} line(s) not checked yet")
     if unticked:
         why.append(f"{unticked} line(s) not ticked in step 3")
     if DOUBLES:
-        why.append(f"{len(DOUBLES)} possible double entr{'y' if len(DOUBLES) == 1 else 'ies'} to check in step 2")
+        why.append(f"{len(DOUBLES)} possible double entr{'y' if len(DOUBLES) == 1 else 'ies'} to check")
     if bad_docs:
         why.append(f"{bad_docs} document total(s) do not match yet")
     st.markdown(f"<p><span class='stamp {'ok' if REC else 'bad'}'>{'✓ Reconciled' if REC else 'Not reconciled yet'}</span>"
                 f"<br><span class='muted'>{'. '.join(why)}</span></p>", unsafe_allow_html=True)
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["1 · Upload", f"2 · Tag ({sum(1 for l in lines if not l['done'])})",
-                                        "3 · Reconcile", "4 · Year", "All records"])
+tab1, tab2, tab4, tab5 = st.tabs(["1 · Upload",
+                                  f"2 · Check ({sum(1 for l in lines if not l['ok'] and not l.get('dup'))})",
+                                  "3 · Year", "All records"])
 
 # ---------------------------------------------------------------- 1 upload
 with tab1:
@@ -532,115 +533,16 @@ with tab1:
                         st.success(f"✓ {name}: bill amount {money(printed or 0)}, filed under {where.split(':')[0]}")
                     else:
                         st.success(f"✓ {name}: {n} line(s) added, filed by date ({where})" + ("" if printed is not None else
-                                   ". No printed total found, please type it in step 3."))
+                                   ". No printed total found, please type it in step 2."))
                 except Exception as e:  # noqa: BLE001
                     st.error(f"✗ {name}: could not be read. Please try again or use a clearer copy. ({type(e).__name__})")
         st.session_state.up_key += 1
         st.button("Done, show me the lines", type="primary")
-        st.caption("Then open tab 2 · Tag.")
+        st.caption("Then open tab 2 · Check.")
     if sources:
         st.markdown("**Already uploaded this month**")
         for s in SI:
             st.markdown(f"- {s['label']} ({s['period'] or 'no period'}): {len(s['lines'])} line(s) in this month, {money(s['read'])}")
-
-# ---------------------------------------------------------------- 2 tag
-with tab2:
-    st.subheader("Check and tag each line")
-    st.caption("Claude suggests a letter. If it is right press ✓. If not, choose the right letter and press ✓. "
-               "The line then moves to step 3. X means not Mum's spending.")
-    doubles = find_doubles()
-    if doubles:
-        extras = [(g[0], r) for g in doubles for r in g[1:]]   # first copy is always kept
-        st.error(f"⚠ {len(extras)} double entr{'y' if len(extras) == 1 else 'ies'} found: "
-                 "same name, same amount and same date.")
-        st.caption("The first copy of each is kept. Tick the extra copies to delete, or press Select all.")
-        b1, b2 = st.columns(2)
-        if b1.button("Select all", width="stretch"):
-            for _, r in extras:
-                st.session_state[f"dsel{r['id']}"] = True
-            st.rerun()
-        if b2.button("Clear selection", width="stretch"):
-            for _, r in extras:
-                st.session_state[f"dsel{r['id']}"] = False
-            st.rerun()
-        for gi, g in enumerate(doubles):
-            with st.container(border=True):
-                first = g[0]
-                st.markdown(f"**{first['descr']}** · {first['tx_date']:%d/%m/%Y} · **{money(first['amt'])}**")
-                st.markdown(f"<span class='muted'>Keep: copy 1 from {first['source']}</span>", unsafe_allow_html=True)
-                for i, r in enumerate(g[1:], start=2):
-                    st.checkbox(f"Delete copy {i} (from {r['source']})", key=f"dsel{r['id']}")
-                if st.button("These are real, keep all", key=f"dupok{gi}"):
-                    q("UPDATE mum_lines SET dup_ok=TRUE WHERE id = ANY(%s)", ([r["id"] for r in g],))
-                    st.rerun()
-        chosen = [(k, r) for k, r in extras if st.session_state.get(f"dsel{r['id']}")]
-        if st.button(f"🗑 Delete {len(chosen)} selected double entr{'y' if len(chosen) == 1 else 'ies'}",
-                     type="primary", disabled=not chosen, width="stretch"):
-            for keep, r in chosen:
-                if r["source_id"] is not None and r["source_id"] != keep["source_id"]:
-                    # copy belongs to another statement: keep it on that statement so its printed total
-                    # still matches, but take it out of Mum's spending
-                    q("UPDATE mum_lines SET dup=TRUE, cat='X', done=TRUE, ok=TRUE WHERE id=%s", (r["id"],))
-                else:
-                    q("DELETE FROM mum_lines WHERE id=%s", (r["id"],))
-                st.session_state.pop(f"dsel{r['id']}", None)
-            st.success(f"Deleted {len(chosen)} double entr{'y' if len(chosen) == 1 else 'ies'}.")
-            st.rerun()
-    todo = [l for l in lines if not l["done"]]
-    if lines:
-        st.markdown(f"**{len(todo)} line(s) waiting** · {len(lines) - len(todo)} done and moved to step 3")
-    if any(l["cat"] for l in todo):
-        if st.button("✓ Confirm all that have a letter", type="primary"):
-            for l in todo:
-                if l["cat"]:
-                    q("UPDATE mum_lines SET done=TRUE WHERE id=%s", (l["id"],))
-                    save_rule(l["descr"], l["cat"])
-            st.rerun()
-    src_name = {s["id"]: s["label"] for s in sources}
-    for l in todo:
-        with st.container(border=True):
-            st.markdown(f"**{l['descr'] or '(no description)'}**  \n"
-                        f"<span class='muted'>{l['tx_date'] or ''} · {src_name.get(l['source_id'], 'Added by hand')}</span>",
-                        unsafe_allow_html=True)
-            a, b = st.columns([3, 2])
-            new_cat = a.selectbox("Category", CAT_OPTIONS, index=CAT_OPTIONS.index(l["cat"]) if l["cat"] in CAT_OPTIONS else 0,
-                                  format_func=cat_label, key=f"cat{l['id']}")
-            new_amt = b.number_input("Amount $", value=float(l["amt"]), min_value=0.0, step=0.01, format="%.2f",
-                                     key=f"amt{l['id']}")
-            with st.expander("Edit date or description"):
-                new_date = st.date_input("Date", value=l["tx_date"] or date(int(cur[:4]), int(cur[5:]), 1),
-                                         key=f"dt{l['id']}", format="DD/MM/YYYY")
-                new_desc = st.text_input("Description", value=l["descr"] or "", key=f"ds{l['id']}")
-            x, y = st.columns(2)
-            if x.button("✓ Done", key=f"ok{l['id']}", type="primary", width="stretch", disabled=not new_cat):
-                q("UPDATE mum_lines SET cat=%s, amt=%s, tx_date=%s, descr=%s, month=%s, done=TRUE WHERE id=%s",
-                  (new_cat, r2(new_amt), new_date, new_desc, ym(new_date), l["id"]))
-                save_rule(new_desc, new_cat)
-                st.rerun()
-            if y.button("Delete line", key=f"del{l['id']}", width="stretch"):
-                st.session_state[f"confirm_del{l['id']}"] = True
-            if st.session_state.get(f"confirm_del{l['id']}"):
-                st.warning("Delete this line? Only do this if it is not real spending.")
-                if st.button("Yes, delete", key=f"del2{l['id']}"):
-                    q("DELETE FROM mum_lines WHERE id=%s", (l["id"],))
-                    st.rerun()
-    if lines and not todo:
-        st.success("All lines are done and in step 3 ✓")
-    if not lines:
-        st.info("Upload a statement in step 1 and the lines appear here.")
-    with st.expander("+ Add a line by hand"):
-        with st.form("manual", clear_on_submit=True):
-            d = st.date_input("Date", value=date(int(cur[:4]), int(cur[5:]), 1), format="DD/MM/YYYY")
-            ds = st.text_input("Description")
-            am = st.number_input("Amount $", min_value=0.0, step=0.01, format="%.2f")
-            ct = st.selectbox("Category", CAT_OPTIONS, format_func=cat_label)
-            if st.form_submit_button("Add line"):
-                if am <= 0 or not ds:
-                    st.error("Please fill in a description and an amount.")
-                else:
-                    q("INSERT INTO mum_lines(month,source_id,tx_date,descr,amt,cat) VALUES(%s,NULL,%s,%s,%s,%s)",
-                      (ym(d), d, ds, r2(am), ct))
-                    st.rerun()
 
 # ---------------------------------------------------------------- 3 reconcile
 def pill(k, dup=False):
@@ -691,39 +593,93 @@ def month_csv():
     return pd.DataFrame(rows).to_csv(index=False)
 
 
-with tab3:
-    st.subheader(f"Reconciliation report: {mlabel}")
-    a, b = st.columns(2)
-    with a:
-        st.markdown("**Summary by category**")
-        st.markdown("<table style='width:100%'>" + "".join(
-            f"<tr><td>{pill(k)}</td><td style='text-align:right'>{money(T[k])}</td></tr>" for k in ALLK) +
-            f"<tr><td><b>Total</b></td><td style='text-align:right'><b>{money(SPEND)}</b></td></tr></table>",
-            unsafe_allow_html=True)
-    with b:
-        read = r2(sum(l["amt"] for l in lines))
-        calc = r2(read - T["X"] - T[""] + cash)
-        agree = abs(calc - SPEND) < 0.005
-        st.markdown("**Reconciliation**")
-        st.markdown(f"""<table style='width:100%'>
-<tr><td>Spending read from documents</td><td style='text-align:right'>{money(read)}</td></tr>
-<tr><td>Less: not Mum's or double entries (X)</td><td style='text-align:right'>({money(T['X'])})</td></tr>
-<tr><td>Less: not tagged yet</td><td style='text-align:right'>({money(T[''])})</td></tr>
-<tr><td>Add: cash for groceries</td><td style='text-align:right'>{money(cash)}</td></tr>
-<tr><td><b>Total allocated</b></td><td style='text-align:right'><b>{money(calc)}</b></td></tr>
-<tr><td>Check against summary</td><td style='text-align:right' class='{'ok' if agree else 'bad'}'>{'✓ agrees' if agree else '✗'}</td></tr>
-</table>""", unsafe_allow_html=True)
+def cb_cat(lid, desc):
+    v = st.session_state.get(f"cat{lid}", "")
+    q("UPDATE mum_lines SET cat=%s WHERE id=%s", (v, lid))
+    if not v:   # no letter = cannot stay checked
+        q("UPDATE mum_lines SET ok=FALSE, done=FALSE WHERE id=%s", (lid,))
+        st.session_state.pop(f"tk{lid}", None)
+    else:
+        save_rule(desc, v)
+
+
+def cb_amt(lid):
+    v = st.session_state.get(f"amt{lid}")
+    q("UPDATE mum_lines SET amt=%s, ok=FALSE, done=FALSE WHERE id=%s", (r2(v), lid))
+    st.session_state.pop(f"tk{lid}", None)
+
+
+def cb_tick(lid):
+    v = bool(st.session_state.get(f"tk{lid}"))
+    q("UPDATE mum_lines SET ok=%s, done=%s WHERE id=%s", (v, v, lid))
+
+
+def tick_many(ls, value):
+    ids = [l["id"] for l in ls]
+    if ids:
+        q("UPDATE mum_lines SET ok=%s, done=%s WHERE id = ANY(%s)", (value, value, ids))
+    for l in ls:
+        st.session_state.pop(f"tk{l['id']}", None)
+
+
+with tab2:
+    st.subheader(f"Check each line: {mlabel}")
+    st.caption("For each line: make sure the letter is right, then tick it once it matches the statement. "
+               "Ticked lines drop out of view so you can see what is left. X means not Mum's spending.")
+    doubles = find_doubles()
+    if doubles:
+        extras = [(g[0], r) for g in doubles for r in g[1:]]   # first copy is always kept
+        st.error(f"⚠ {len(extras)} double entr{'y' if len(extras) == 1 else 'ies'} found: "
+                 "same name, same amount and same date.")
+        st.caption("The first copy of each is kept. Tick the extra copies to delete, or press Select all.")
+        b1, b2 = st.columns(2)
+        if b1.button("Select all", width="stretch"):
+            for _, r in extras:
+                st.session_state[f"dsel{r['id']}"] = True
+            st.rerun()
+        if b2.button("Clear selection", width="stretch"):
+            for _, r in extras:
+                st.session_state[f"dsel{r['id']}"] = False
+            st.rerun()
+        for gi, g in enumerate(doubles):
+            with st.container(border=True):
+                first = g[0]
+                st.markdown(f"**{first['descr']}** · {first['tx_date']:%d/%m/%Y} · **{money(first['amt'])}**")
+                st.markdown(f"<span class='muted'>Keep: copy 1 from {first['source']}</span>", unsafe_allow_html=True)
+                for i, r in enumerate(g[1:], start=2):
+                    st.checkbox(f"Delete copy {i} (from {r['source']})", key=f"dsel{r['id']}")
+                if st.button("These are real, keep all", key=f"dupok{gi}"):
+                    q("UPDATE mum_lines SET dup_ok=TRUE WHERE id = ANY(%s)", ([r["id"] for r in g],))
+                    st.rerun()
+        chosen = [(k, r) for k, r in extras if st.session_state.get(f"dsel{r['id']}")]
+        if st.button(f"🗑 Delete {len(chosen)} selected double entr{'y' if len(chosen) == 1 else 'ies'}",
+                     type="primary", disabled=not chosen, width="stretch"):
+            for keep, r in chosen:
+                if r["source_id"] is not None and r["source_id"] != keep["source_id"]:
+                    # copy belongs to another statement: keep it on that statement so its printed total
+                    # still matches, but take it out of Mum's spending
+                    q("UPDATE mum_lines SET dup=TRUE, cat='X', done=TRUE, ok=TRUE WHERE id=%s", (r["id"],))
+                else:
+                    q("DELETE FROM mum_lines WHERE id=%s", (r["id"],))
+                st.session_state.pop(f"dsel{r['id']}", None)
+            st.success(f"Deleted {len(chosen)} double entr{'y' if len(chosen) == 1 else 'ies'}.")
+            st.rerun()
+
+    n_all = sum(1 for l in lines if not l.get("dup"))
+    n_ok = sum(1 for l in lines if l["ok"] and not l.get("dup"))
+    if lines:
+        st.markdown(f"**{n_ok} of {n_all}** lines checked")
+        st.progress(n_ok / n_all if n_all else 1.0)
+    can_tick = [l for l in lines if l["cat"] and not l["ok"] and not l.get("dup")]
+    if can_tick and st.button(f"✓ Tick all {len(can_tick)} line(s) that have a letter", type="primary"):
+        tick_many(can_tick, True)
+        st.rerun()
+    show_all = st.toggle("Show checked lines too", value=False)
 
     new_cash = st.number_input("Cash for groceries this month $", value=float(cash), min_value=0.0, step=10.0, format="%.2f")
     if r2(new_cash) != r2(cash):
         set_cash(cur, new_cash)
         st.rerun()
-
-    st.markdown("### Line-by-line")
-    n_all = len(lines)
-    n_ok = sum(1 for l in lines if l["done"] and l["ok"])
-    if n_all:
-        st.markdown(f"**{n_ok} of {n_all}** lines ticked. Check each line against the paper statement, then tick it.")
 
     groups = [(s, s["lines"]) for s in SI]
     man = [l for l in lines if l["source_id"] is None]
@@ -739,30 +695,48 @@ with tab3:
                 if (pr is None) != (s["printed"] is None) or (pr is not None and r2(pr) != s["printed"]):
                     q("UPDATE mum_sources SET printed=%s WHERE id=%s", (None if pr is None else r2(pr), s["id"]))
                     st.rerun()
-            done_ls = [l for l in ls if l["done"]]
-            wait_ls = [l for l in ls if not l["done"]]
-            if done_ls:
-                all_ok = all(l["ok"] for l in done_ls)
-                if st.button("Untick all" if all_ok else "Tick all", key=f"ta{s['id']}"):
-                    q("UPDATE mum_lines SET ok=%s WHERE id = ANY(%s)", (not all_ok, [l["id"] for l in done_ls]))
-                    for l in done_ls:
-                        st.session_state.pop(f"tk{l['id']}", None)
-                    st.rerun()
-            for l in done_ls:
-                c1, c2, c3 = st.columns([6, 2, 2], vertical_alignment="center")
-                c1.markdown(f"{l['descr']}  \n<span class='muted'>{l['tx_date'] or ''}</span> {pill(l['cat'], l.get('dup'))} "
-                            f"**{money(l['amt'])}**", unsafe_allow_html=True)
-                v = c2.checkbox("Checked", value=bool(l["ok"]), key=f"tk{l['id']}")
-                if v != bool(l["ok"]):
-                    q("UPDATE mum_lines SET ok=%s WHERE id=%s", (v, l["id"]))
-                    st.rerun()
-                if c3.button("Edit", key=f"ed{l['id']}"):
-                    q("UPDATE mum_lines SET done=FALSE, ok=FALSE, dup=FALSE, dup_ok=TRUE WHERE id=%s", (l["id"],))
-                    st.session_state.pop(f"tk{l['id']}", None)
-                    st.rerun()
-            if wait_ls:
-                st.markdown(f"<span class='bad'>Still in step 2: {len(wait_ls)} line(s), "
-                            f"{money(sum(l['amt'] for l in wait_ls))}</span>", unsafe_allow_html=True)
+            real = [l for l in ls if not l.get("dup")]
+            open_ls = [l for l in real if not l["ok"]]
+            tickable = [l for l in open_ls if l["cat"]]
+            if tickable and st.button(f"Tick all {len(tickable)} here", key=f"ta{s['id']}"):
+                tick_many(tickable, True)
+                st.rerun()
+            shown = ls if show_all else open_ls
+            for l in shown:
+                lid = l["id"]
+                with st.container(border=True):
+                    st.markdown(f"**{l['descr'] or '(no description)'}**  \n<span class='muted'>"
+                                f"{l['tx_date']:%d/%m/%Y}</span>" if l["tx_date"] else f"**{l['descr']}**",
+                                unsafe_allow_html=True)
+                    if l.get("dup"):
+                        st.markdown(pill("X", True) + f" **{money(l['amt'])}**", unsafe_allow_html=True)
+                        continue
+                    a, b = st.columns([3, 2])
+                    a.selectbox("Category", CAT_OPTIONS,
+                                index=CAT_OPTIONS.index(l["cat"]) if l["cat"] in CAT_OPTIONS else 0,
+                                format_func=cat_label, key=f"cat{lid}", on_change=cb_cat, args=(lid, l["descr"]))
+                    b.number_input("Amount $", value=float(l["amt"]), min_value=0.0, step=0.01, format="%.2f",
+                                   key=f"amt{lid}", on_change=cb_amt, args=(lid,))
+                    st.checkbox("✓ Checked against the statement", value=bool(l["ok"]), key=f"tk{lid}",
+                                on_change=cb_tick, args=(lid,), disabled=not l["cat"],
+                                help=None if l["cat"] else "Choose a letter first")
+                    with st.expander("Change date or description, or delete"):
+                        nd = st.date_input("Date", value=l["tx_date"] or date(int(cur[:4]), int(cur[5:]), 1),
+                                           key=f"dt{lid}", format="DD/MM/YYYY")
+                        ns = st.text_input("Description", value=l["descr"] or "", key=f"ds{lid}")
+                        x, y = st.columns(2)
+                        if x.button("Save", key=f"sv{lid}", width="stretch"):
+                            q("UPDATE mum_lines SET tx_date=%s, descr=%s, month=%s WHERE id=%s", (nd, ns, ym(nd), lid))
+                            st.rerun()
+                        if y.button("Delete line", key=f"del{lid}", width="stretch"):
+                            st.session_state[f"confirm_del{lid}"] = True
+                        if st.session_state.get(f"confirm_del{lid}"):
+                            st.warning("Delete this line? Only do this if it is not real spending.")
+                            if st.button("Yes, delete", key=f"del2{lid}"):
+                                q("DELETE FROM mum_lines WHERE id=%s", (lid,))
+                                st.rerun()
+            if not shown and ls:
+                st.markdown("<span class='ok'>✓ Every line here is checked</span>", unsafe_allow_html=True)
             diff = s.get("diff")
             spans = s.get("m1") and s.get("m2") and s["m1"] != s["m2"]
             if spans:
@@ -780,17 +754,54 @@ with tab3:
                 if st.button("Remove this document and its lines", key=f"rm{s['id']}"):
                     st.session_state[f"confirm_rm{s['id']}"] = True
                 if st.session_state.get(f"confirm_rm{s['id']}"):
-                    st.warning("This removes the document and all its lines from this month.")
+                    st.warning("This removes the document and all its lines.")
                     if st.button("Yes, remove it", key=f"rm2{s['id']}"):
                         q("DELETE FROM mum_sources WHERE id=%s", (s["id"],))
                         st.rerun()
     if not lines:
-        st.info("Lines appear here once you upload documents.")
+        st.info("Upload a statement in step 1 and the lines appear here.")
+    with st.expander("+ Add a line by hand"):
+        with st.form("manual", clear_on_submit=True):
+            d = st.date_input("Date", value=date(int(cur[:4]), int(cur[5:]), 1), format="DD/MM/YYYY")
+            ds = st.text_input("Description")
+            am = st.number_input("Amount $", min_value=0.0, step=0.01, format="%.2f")
+            ct = st.selectbox("Category", CAT_OPTIONS, format_func=cat_label)
+            if st.form_submit_button("Add line"):
+                if am <= 0 or not ds:
+                    st.error("Please fill in a description and an amount.")
+                else:
+                    q("INSERT INTO mum_lines(month,source_id,tx_date,descr,amt,cat) VALUES(%s,NULL,%s,%s,%s,%s)",
+                      (ym(d), d, ds, r2(am), ct))
+                    st.rerun()
+
+
+    st.markdown("### Reconciliation report")
+    a, b = st.columns(2)
+    with a:
+        st.markdown("**Summary by category**")
+        st.markdown("<table style='width:100%'>" + "".join(
+            f"<tr><td>{pill(k)}</td><td style='text-align:right'>{money(T[k])}</td></tr>" for k in ALLK) +
+            f"<tr><td><b>Total</b></td><td style='text-align:right'><b>{money(SPEND)}</b></td></tr></table>",
+            unsafe_allow_html=True)
+    with b:
+        read = r2(sum(l["amt"] for l in lines))
+        calc = r2(read - T["X"] - T[""] + cash)
+        agree = abs(calc - SPEND) < 0.005
+        st.markdown("**Reconciliation**")
+        st.markdown(f"""<table style='width:100%'>
+<tr><td>Spending read from documents</td><td style='text-align:right'>{money(read)}</td></tr>
+<tr><td>Less: not Mum's or double entries (X)</td><td style='text-align:right'>({money(T['X'])})</td></tr>
+<tr><td>Less: no letter yet</td><td style='text-align:right'>({money(T[''])})</td></tr>
+<tr><td>Add: cash for groceries</td><td style='text-align:right'>{money(cash)}</td></tr>
+<tr><td><b>Total allocated</b></td><td style='text-align:right'><b>{money(calc)}</b></td></tr>
+<tr><td>Check against summary</td><td style='text-align:right' class='{'ok' if agree else 'bad'}'>{'✓ agrees' if agree else '✗'}</td></tr>
+</table>""", unsafe_allow_html=True)
     d1, d2 = st.columns(2)
     d1.download_button("Download report", report_html(), file_name=f"Mum reconciliation {cur}.html",
                        mime="text/html", width="stretch", type="primary")
     d2.download_button("Download CSV", month_csv(), file_name=f"Mum spend {cur}.csv", mime="text/csv",
                        width="stretch")
+
 
 # ---------------------------------------------------------------- 4 year
 with tab4:
@@ -836,7 +847,7 @@ with tab5:
     data = [{"Month": r["month"], "Date": r["tx_date"], "Description": r["descr"], "Category": r["cat"] or "",
              "Category name": cat_label(r["cat"]).split(" · ")[-1] if r["cat"] else "Not tagged",
              "Amount": r2(r["amt"]), "Source": r["source"],
-             "Status": "Double entry (left out)" if r["dup"] else "Checked" if (r["done"] and r["ok"]) else "In step 3" if r["done"] else "In step 2"} for r in rows]
+             "Status": "Double entry (left out)" if r["dup"] else "Checked" if r["ok"] else "Not checked yet"} for r in rows]
     data += [{"Month": m, "Date": date(int(m[:4]), int(m[5:]), 1), "Description": "Cash for groceries (fixed)",
               "Category": "G", "Category name": "Groceries", "Amount": r2(v), "Source": "Cash", "Status": "Checked"}
              for m, v in cash_map.items()]
@@ -863,8 +874,8 @@ with tab5:
 with st.sidebar:
     st.markdown("### How to use")
     st.markdown("1. Pick the month at the top.\n2. **Upload**: statements first, then switch to Utility bill.\n"
-                "3. **Tag**: press ✓ when the letter is right.\n4. **Reconcile**: type each printed total, tick every line.\n"
-                "5. When the stamp says **Reconciled**, download the report.")
+                "3. **Check**: type each statement's printed total, make sure each letter is right, tick each line.\n"
+                "4. When the stamp says **Reconciled**, download the report.")
     if str(st.secrets.get("APP_PIN", "")).strip() and st.button("Log out"):
         st.session_state.authed = False
         st.rerun()
