@@ -92,7 +92,12 @@ div[data-testid="stButton"] button{min-height:44px}
 # ---------------------------------------------------------------- PIN gate
 def pin_gate():
     # No APP_PIN in the secrets = no PIN screen; the app opens straight away.
-    if st.session_state.get("authed") or not str(st.secrets.get("APP_PIN", "")).strip():
+    pin_set = str(st.secrets.get("APP_PIN", "")).strip()
+    if st.session_state.get("authed") or not pin_set:
+        return
+    # A private link (app address + ?key=PIN) opens straight in, so Mum never has to type anything.
+    if st.query_params.get("key", "") == pin_set:
+        st.session_state.authed = True
         return
     st.title("Mum's monthly spend")
     pin = st.text_input("Enter your PIN", type="password", max_chars=8)
