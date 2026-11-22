@@ -406,8 +406,8 @@ if lines:
     st.markdown(f"<p><span class='stamp {'ok' if REC else 'bad'}'>{'✓ Reconciled' if REC else 'Not reconciled yet'}</span>"
                 f"<br><span class='muted'>{'. '.join(why)}</span></p>", unsafe_allow_html=True)
 
-tab1, tab2, tab3, tab4 = st.tabs(["1 · Upload", f"2 · Tag ({sum(1 for l in lines if not l['done'])})",
-                                  "3 · Reconcile", "4 · Year"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["1 · Upload", f"2 · Tag ({sum(1 for l in lines if not l['done'])})",
+                                        "3 · Reconcile", "4 · Year", "All records"])
 
 # ---------------------------------------------------------------- 1 upload
 with tab1:
@@ -680,6 +680,45 @@ with tab4:
                  column_config={c: st.column_config.NumberColumn(c, format="$%.2f") for c in ALLK + ["Total"]})
     st.caption("S Susan · F Family food · T Transport · G Groceries (incl. cash) · U Utilities · M Medical. Empty months show blank.")
     st.download_button("Download year CSV", df.to_csv(index=False), file_name=f"Mum spend {y} by month.csv", mime="text/csv")
+
+# ---------------------------------------------------------------- all records (whole database)
+with tab5:
+    st.subheader("All records")
+    st.caption("Every line from every month in one place, plus the monthly cash for groceries.")
+    rows = q("""SELECT l.month, l.tx_date, l.descr, l.amt, l.cat, l.done, l.ok,
+                       COALESCE(s.label, 'Added by hand') AS source
+                FROM mum_lines l LEFT JOIN mum_sources s ON s.id = l.source_id
+                ORDER BY l.tx_date NULLS LAST, l.id""", fetch=True)
+    cash_rows = q("SELECT month, cash FROM mum_months", fetch=True)
+    cash_map = {r["month"]: float(r["cash"]) for r in cash_rows}
+    for m in {r["month"] for r in rows}:
+        cash_map.setdefault(m, DEFAULT_CASH)
+    data = [{"Month": r["month"], "Date": r["tx_date"], "Description": r["descr"], "Category": r["cat"] or "",
+             "Category name": cat_label(r["cat"]).split(" · ")[-1] if r["cat"] else "Not tagged",
+             "Amount": r2(r["amt"]), "Source": r["source"],
+             "Status": "Checked" if (r["done"] and r["ok"]) else "In step 3" if r["done"] else "In step 2"} for r in rows]
+    data += [{"Month": m, "Date": date(int(m[:4]), int(m[5:]), 1), "Description": "Cash for groceries (fixed)",
+              "Category": "G", "Category name": "Groceries", "Amount": r2(v), "Source": "Cash", "Status": "Checked"}
+             for m, v in cash_map.items()]
+    if not data:
+        st.info("Nothing saved yet. Upload a statement in step 1.")
+    else:
+        df = pd.DataFrame(data).sort_values(["Date", "Month"], na_position="last")
+        f1, f2 = st.columns(2)
+        months_avail = sorted(df["Month"].unique())
+        m_from = f1.selectbox("From month", months_avail, index=0)
+        m_to = f2.selectbox("To month", months_avail, index=len(months_avail) - 1)
+        cats_pick = st.multiselect("Categories", CAT_OPTIONS, default=ALLK, format_func=lambda k: cat_label(k) if k else "Not tagged")
+        search = st.text_input("Search description", placeholder="e.g. NTUC, Grab, clinic")
+        v = df[(df["Month"] >= m_from) & (df["Month"] <= m_to) & (df["Category"].isin(cats_pick))]
+        if search.strip():
+            v = v[v["Description"].fillna("").str.contains(search.strip(), case=False, regex=False)]
+        st.markdown(f"**{len(v)} record(s) · Total {money(v['Amount'].sum())}**")
+        st.dataframe(v, hide_index=True, width="stretch",
+                     column_config={"Amount": st.column_config.NumberColumn("Amount", format="$%.2f"),
+                                    "Date": st.column_config.DateColumn("Date", format="DD/MM/YYYY")})
+        st.download_button("Download these records (CSV)", v.to_csv(index=False),
+                           file_name=f"Mum spend records {m_from} to {m_to}.csv", mime="text/csv")
 
 with st.sidebar:
     st.markdown("### How to use")
