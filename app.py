@@ -1067,7 +1067,7 @@ if view == "year":
 if view == "all":
     st.subheader("All records")
     st.caption("Every line from every month in one place, plus the monthly cash for groceries.")
-    rows = q("""SELECT l.month, l.tx_date, l.descr, l.amt, l.cat, l.done, l.ok, l.dup,
+    rows = q("""SELECT l.id, l.month, l.tx_date, l.descr, l.amt, l.cat, l.done, l.ok, l.dup,
                        COALESCE(s.label, 'Added by hand') AS source
                 FROM mum_lines l LEFT JOIN mum_sources s ON s.id = l.source_id
                 ORDER BY l.tx_date NULLS LAST, l.id""", fetch=True)
@@ -1075,11 +1075,11 @@ if view == "all":
     cash_map = {r["month"]: float(r["cash"]) for r in cash_rows}
     for m in {r["month"] for r in rows}:
         cash_map.setdefault(m, DEFAULT_CASH)
-    data = [{"Month": r["month"], "Date": r["tx_date"], "Description": r["descr"], "Category": r["cat"] or "",
+    data = [{"_id": f"L{r['id']}", "Month": r["month"], "Date": r["tx_date"], "Description": r["descr"], "Category": r["cat"] or "",
              "Category name": cat_label(r["cat"]).split(" · ")[-1] if r["cat"] else "Not tagged",
              "Amount": r2(r["amt"]), "Source": r["source"],
              "Status": "Double entry (left out)" if r["dup"] else "Checked" if r["ok"] else "Not checked yet"} for r in rows]
-    data += [{"Month": m, "Date": date(int(m[:4]), int(m[5:]), 1), "Description": "Cash for groceries (fixed)",
+    data += [{"_id": f"C{m}", "Month": m, "Date": date(int(m[:4]), int(m[5:]), 1), "Description": "Cash for groceries (fixed)",
               "Category": "Cash", "Category name": "Cash for groceries", "Amount": r2(v), "Source": "Cash", "Status": "Checked"}
              for m, v in cash_map.items()]
     if not data:
@@ -1097,10 +1097,38 @@ if view == "all":
         if search.strip():
             v = v[v["Description"].fillna("").str.contains(search.strip(), case=False, regex=False)]
         st.markdown(f"**{len(v)} record(s) · Total {money(v['Amount'].sum())}**")
-        st.dataframe(v, hide_index=True, width="stretch",
-                     column_config={"Amount": st.column_config.NumberColumn("Amount", format="$%.2f"),
-                                    "Date": st.column_config.DateColumn("Date", format="DD/MM/YYYY")})
-        st.download_button("Download these records (CSV)", v.to_csv(index=False),
+        st.caption("Tap a Category to change its letter. It saves straight away. "
+                   "(Cash for groceries and double entries cannot be changed here.)")
+        v = v.set_index("_id")
+        ed_key = "rec_" + hashlib.md5(f"{m_from}{m_to}{sorted(cats_pick)}{search}".encode()).hexdigest()[:10]
+        edited = st.data_editor(
+            v, hide_index=True, width="stretch", key=ed_key,
+            disabled=[c for c in v.columns if c != "Category"],
+            column_order=["Month", "Date", "Description", "Category", "Category name", "Amount", "Source", "Status"],
+            column_config={"Amount": st.column_config.NumberColumn("Amount", format="$%.2f"),
+                           "Date": st.column_config.DateColumn("Date", format="DD/MM/YYYY"),
+                           "Category": st.column_config.SelectboxColumn(
+                               "Category ✎", options=ALLK + ["X", "Cash"], required=False,
+                               format_func=lambda k: "$ · Cash for groceries" if k == "Cash" else cat_label(k),
+                               help="S Susan · F Family food · T Transport · G Groceries · U Utilities · "
+                                    "M Medical · H Household · X not Mum's")})
+        changed = 0
+        for rid, new in edited["Category"].items():
+            old = v.at[rid, "Category"]
+            if (new or "") == (old or ""):
+                continue
+            if not str(rid).startswith("L") or v.at[rid, "Status"].startswith("Double") or new == "Cash":
+                continue   # cash rows and left-out doubles are not editable here
+            lid = int(str(rid)[1:])
+            new = str(new or "").strip().upper()
+            q("UPDATE mum_lines SET cat=%s" + (", ok=FALSE, done=FALSE" if not new else "") + " WHERE id=%s", (new, lid))
+            if new:
+                save_rule(v.at[rid, "Description"], new)
+            changed += 1
+        if changed:
+            st.toast(f"Saved {changed} change(s)")
+            st.rerun()
+        st.download_button("Download these records (CSV)", v.reset_index(drop=True).to_csv(index=False),
                            file_name=f"Mum spend records {m_from} to {m_to}.csv", mime="text/csv")
 
 with st.expander("How to use this app"):
