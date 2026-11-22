@@ -630,10 +630,18 @@ if view == "upload":
                 st.button(f"Open {month_name(k)} · {r['n']} to check", key=f"goup{k}", type="primary", width="stretch",
                           on_click=lambda k=k: st.session_state.update(month=k, pick_m=MN[int(k[5:]) - 1],
                                                                        pick_y=int(k[:4]), view="check"))
-    if sources:
-        st.markdown("**Already uploaded this month**")
-        for s in SI:
-            st.markdown(f"- {s['label']} ({s['period'] or 'no period'}): {len(s['lines'])} line(s) in this month, {money(s['read'])}")
+    hist = q("""SELECT s.id, s.label, s.period, s.name, s.added, COUNT(l.id) AS n, COALESCE(SUM(l.amt), 0) AS total,
+                       MIN(l.month) AS m1, MAX(l.month) AS m2
+                FROM mum_sources s LEFT JOIN mum_lines l ON l.source_id = s.id AND NOT l.dup
+                GROUP BY s.id ORDER BY s.added DESC, s.id DESC""", fetch=True)
+    if hist:
+        st.markdown("**Everything uploaded so far** (newest first)")
+        for r in hist:
+            where = (month_name(r["m1"]) if r["m1"] == r["m2"] else f"{month_name(r['m1'])} to {month_name(r['m2'])}") \
+                if r["m1"] else "no lines"
+            st.markdown(f"- **{r['label']}** {r['period'] or ''} · {r['n']} line(s) · {money(r['total'])} · filed under {where}"
+                        f"<br><span class='muted'>{r['name']} · uploaded {r['added']:%d/%m %H:%M}</span>",
+                        unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- 3 reconcile
 def pill(k, dup=False):
