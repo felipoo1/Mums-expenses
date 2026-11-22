@@ -883,10 +883,23 @@ if view == "check":
 
 
     st.markdown("### Reconciliation report")
-    new_cash = st.number_input("Cash for groceries this month $", value=float(cash), min_value=0.0, step=10.0, format="%.2f")
-    if r2(new_cash) != r2(cash):
-        set_cash(cur, new_cash)
-        st.rerun()
+    # Cash is fixed at $500. It can only change on purpose (no scroll or +/- accidents).
+    cc1, cc2 = st.columns([4, 1], vertical_alignment="center")
+    cc1.markdown(f"Cash for groceries this month: **{money(cash)}**"
+                 + ("" if r2(cash) == DEFAULT_CASH else f" <span class='bad'>(normally {money(DEFAULT_CASH)})</span>"),
+                 unsafe_allow_html=True)
+    with cc2.popover("Change", width="stretch"):
+        with st.form(f"cash{cur}", border=False):
+            nc = st.text_input("Cash amount $", value=f"{cash:.2f}")
+            if st.form_submit_button("Save", type="primary"):
+                try:
+                    set_cash(cur, float(nc.replace("$", "").replace(",", "")))
+                    st.rerun()
+                except ValueError:
+                    st.error("Please type a number, for example 500")
+        if r2(cash) != DEFAULT_CASH and st.button(f"Reset to {money(DEFAULT_CASH)}", key=f"cashreset{cur}"):
+            set_cash(cur, DEFAULT_CASH)
+            st.rerun()
     a, b = st.columns(2)
     with a:
         st.markdown("**Summary by category**")
