@@ -136,7 +136,7 @@ def q(sql, params=None, fetch=False):
                 raise
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 @st.cache_resource
@@ -175,7 +175,19 @@ def ensure_schema(_v=SCHEMA_VERSION):
     ALTER TABLE mum_lines ENABLE ROW LEVEL SECURITY;
     ALTER TABLE mum_rules ENABLE ROW LEVEL SECURITY;
     """)
+    # v2: every line is filed under the month of its own transaction date,
+    # and each document under the month most of its lines fall in.
+    refile()
     return True
+
+
+def refile():
+    q("""UPDATE mum_lines SET month = to_char(tx_date, 'YYYY-MM')
+         WHERE tx_date IS NOT NULL AND month <> to_char(tx_date, 'YYYY-MM')""")
+    q("""UPDATE mum_sources s SET month = sub.mm
+         FROM (SELECT source_id, mode() WITHIN GROUP (ORDER BY month) AS mm
+               FROM mum_lines WHERE source_id IS NOT NULL GROUP BY source_id) sub
+         WHERE s.id = sub.source_id AND s.month <> sub.mm""")
 
 
 ensure_schema()
@@ -184,10 +196,21 @@ ensure_schema()
 def load_month(m):
     row = q("SELECT cash FROM mum_months WHERE month=%s", (m,), True)
     cash = float(row[0]["cash"]) if row else DEFAULT_CASH
-    sources = q("SELECT * FROM mum_sources WHERE month=%s ORDER BY id", (m,), True)
     lines = q("SELECT * FROM mum_lines WHERE month=%s ORDER BY tx_date NULLS LAST, id", (m,), True)
+    # documents with a line in this month (a statement can cross months), plus empty ones filed here
+    sources = q("""SELECT * FROM mum_sources WHERE month=%s
+                   OR id IN (SELECT DISTINCT source_id FROM mum_lines WHERE month=%s AND source_id IS NOT NULL)
+                   ORDER BY id""", (m, m), True)
+    ids = [s["id"] for s in sources]
+    whole = {r["source_id"]: r for r in q(
+        """SELECT source_id, SUM(amt) AS total, COUNT(*) AS n, MIN(month) AS m1, MAX(month) AS m2
+           FROM mum_lines WHERE source_id = ANY(%s) GROUP BY source_id""", (ids,), True)} if ids else {}
     for s in sources:
         s["printed"] = None if s["printed"] is None else float(s["printed"])
+        w = whole.get(s["id"])
+        s["doc_total"] = r2(w["total"]) if w else 0.0
+        s["doc_n"] = int(w["n"]) if w else 0
+        s["m1"], s["m2"] = (w["m1"], w["m2"]) if w else (s["month"], s["month"])
     for l in lines:
         l["amt"] = float(l["amt"])
     return cash, sources, lines
@@ -224,10 +247,11 @@ def src_info(sources, lines):
     out = []
     for s in sources:
         ls = [l for l in lines if l["source_id"] == s["id"]]
-        read = r2(sum(l["amt"] for l in ls))
+        read = r2(sum(l["amt"] for l in ls))          # this month's part
         pr = s["printed"]
-        out.append({**s, "lines": ls, "read": read,
-                    "diff": None if pr is None else r2(pr - read)})
+        doc = s.get("doc_total", read)                  # whole document, all months
+        out.append({**s, "lines": ls, "read": read, "doc": doc,
+                    "diff": None if pr is None else r2(pr - doc)})
     return out
 
 
@@ -342,12 +366,12 @@ def save_reading(m, kind, name, fhash, j, rules):
     sid = q("""INSERT INTO mum_sources(month,kind,name,label,period,printed,file_hash)
                VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
             (m, kind, name, label, period, printed, fhash), True)[0]["id"]
-    n = 0
+    per_month = {}
     if kind == "bill":
         d = safe_date(j.get("billDate"), m)
         q("INSERT INTO mum_lines(month,source_id,tx_date,descr,amt,cat) VALUES(%s,%s,%s,%s,%s,'U')",
-          (m, sid, d, f"{label} {period}".strip(), printed or 0))
-        n = 1
+          (ym(d), sid, d, f"{label} {period}".strip(), printed or 0))
+        per_month[ym(d)] = 1
     else:
         for l in j.get("lines") or []:
             amt = r2(l.get("amount"))
@@ -355,10 +379,22 @@ def save_reading(m, kind, name, fhash, j, rules):
                 continue
             desc = str(l.get("desc") or "")
             cat = rules.get(merch(desc)) or (l.get("cat") if l.get("cat") in CAT_OPTIONS else "")
+            d = safe_date(l.get("date"), m)
             q("INSERT INTO mum_lines(month,source_id,tx_date,descr,amt,cat) VALUES(%s,%s,%s,%s,%s,%s)",
-              (m, sid, safe_date(l.get("date"), m), desc, amt, cat))
-            n += 1
-    return printed, n
+              (ym(d), sid, d, desc, amt, cat))
+            per_month[ym(d)] = per_month.get(ym(d), 0) + 1
+    if per_month:   # file the document under the month most of its lines are in
+        main = max(per_month, key=per_month.get)
+        q("UPDATE mum_sources SET month=%s WHERE id=%s", (main, sid))
+    return printed, per_month
+
+
+def ym(d):
+    return f"{d.year}-{d.month:02d}"
+
+
+def month_name(k):
+    return f"{MN[int(k[5:]) - 1]} {k[:4]}"
 
 
 def safe_date(s, m):
@@ -438,7 +474,8 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(["1 · Upload", f"2 · Tag ({sum(1 for l 
 # ---------------------------------------------------------------- 1 upload
 with tab1:
     st.subheader("Upload this month's documents")
-    st.caption("PDFs downloaded from the bank or SP app are best. Photos also work: take them flat, in good light, with the whole page showing.")
+    st.caption("PDFs downloaded from the bank or SP app are best. Photos also work: take them flat, in good light, with the whole page showing. "
+               "You can upload several months at once: every line is filed under the month of its own date.")
     kind = st.radio("What are you uploading?", ["Bank or card statement", "Utility bill (U)"], horizontal=True)
     kind = "bill" if kind.startswith("Utility") else "statement"
     files = st.file_uploader("Choose files", type=["pdf", "jpg", "jpeg", "png", "webp"],
@@ -460,12 +497,14 @@ with tab1:
             with st.spinner(f"Reading {name}… this can take a minute"):
                 try:
                     j = read_with_claude(g, kind)
-                    printed, n = save_reading(cur, kind, name, fhash, j, rules)
+                    printed, per_month = save_reading(cur, kind, name, fhash, j, rules)
+                    n = sum(per_month.values())
+                    where = ", ".join(f"{month_name(k)}: {v}" for k, v in sorted(per_month.items()))
                     known[fhash] = {"label": name, "month": cur}
                     if kind == "bill":
-                        st.success(f"✓ {name}: bill amount {money(printed or 0)}")
+                        st.success(f"✓ {name}: bill amount {money(printed or 0)}, filed under {where.split(':')[0]}")
                     else:
-                        st.success(f"✓ {name}: {n} line(s) added" + ("" if printed is not None else
+                        st.success(f"✓ {name}: {n} line(s) added, filed by date ({where})" + ("" if printed is not None else
                                    ". No printed total found, please type it in step 3."))
                 except Exception as e:  # noqa: BLE001
                     st.error(f"✗ {name}: could not be read. Please try again or use a clearer copy. ({type(e).__name__})")
@@ -475,7 +514,7 @@ with tab1:
     if sources:
         st.markdown("**Already uploaded this month**")
         for s in SI:
-            st.markdown(f"- {s['label']} ({s['period'] or 'no period'}): {len(s['lines'])} line(s), {money(s['read'])}")
+            st.markdown(f"- {s['label']} ({s['period'] or 'no period'}): {len(s['lines'])} line(s) in this month, {money(s['read'])}")
 
 # ---------------------------------------------------------------- 2 tag
 with tab2:
@@ -509,8 +548,8 @@ with tab2:
                 new_desc = st.text_input("Description", value=l["descr"] or "", key=f"ds{l['id']}")
             x, y = st.columns(2)
             if x.button("✓ Done", key=f"ok{l['id']}", type="primary", width="stretch", disabled=not new_cat):
-                q("UPDATE mum_lines SET cat=%s, amt=%s, tx_date=%s, descr=%s, done=TRUE WHERE id=%s",
-                  (new_cat, r2(new_amt), new_date, new_desc, l["id"]))
+                q("UPDATE mum_lines SET cat=%s, amt=%s, tx_date=%s, descr=%s, month=%s, done=TRUE WHERE id=%s",
+                  (new_cat, r2(new_amt), new_date, new_desc, ym(new_date), l["id"]))
                 save_rule(new_desc, new_cat)
                 st.rerun()
             if y.button("Delete line", key=f"del{l['id']}", width="stretch"):
@@ -535,7 +574,7 @@ with tab2:
                     st.error("Please fill in a description and an amount.")
                 else:
                     q("INSERT INTO mum_lines(month,source_id,tx_date,descr,amt,cat) VALUES(%s,NULL,%s,%s,%s,%s)",
-                      (cur, d, ds, r2(am), ct))
+                      (ym(d), d, ds, r2(am), ct))
                     st.rerun()
 
 # ---------------------------------------------------------------- 3 reconcile
@@ -554,7 +593,9 @@ def report_html():
                      f"<td class=n>{money(l['amt'])}</td><td>{'✓' if l['ok'] else '✗'}</td></tr>" for l in s["lines"])
         srcs += (f"<h3>{s['label']} · {s['period'] or ''}</h3><table><tr><th>Date</th><th>Description</th><th>Category</th>"
                  f"<th class=n>Amount</th><th>Checked</th></tr>{ls}<tr class=t><td></td><td>Total of lines</td><td></td>"
-                 f"<td class=n>{money(s['read'])}</td><td></td></tr><tr><td></td><td>Printed on document</td><td></td>"
+                 f"<td class=n>{money(s['read'])}</td><td></td></tr>"
+                 + (f"<tr><td></td><td>Whole document (all months)</td><td></td><td class=n>{money(s['doc'])}</td><td></td></tr>" if s['doc'] != s['read'] else "")
+                 + f"<tr><td></td><td>Printed on document</td><td></td>"
                  f"<td class=n>{'-' if s['printed'] is None else money(s['printed'])}</td><td></td></tr><tr><td></td>"
                  f"<td>Difference</td><td></td><td class=n>{'-' if s['diff'] is None else money(s['diff'])}</td><td></td></tr></table>")
     man = [l for l in lines if l["source_id"] is None]
@@ -656,7 +697,13 @@ with tab3:
                 st.markdown(f"<span class='bad'>Still in step 2: {len(wait_ls)} line(s), "
                             f"{money(sum(l['amt'] for l in wait_ls))}</span>", unsafe_allow_html=True)
             diff = s.get("diff")
-            st.markdown(f"Total of lines **{money(s['read'])}** · Printed "
+            spans = s.get("m1") and s.get("m2") and s["m1"] != s["m2"]
+            if spans:
+                st.markdown(f"This month's part: **{money(s['read'])}** ({len(ls)} line(s)). "
+                            f"<span class='muted'>This document also has lines in other months "
+                            f"({month_name(s['m1'])} to {month_name(s['m2'])}), so it is checked as a whole below.</span>",
+                            unsafe_allow_html=True)
+            st.markdown(f"{'Whole document: lines' if spans else 'Total of lines'} **{money(s.get('doc', s['read']))}** · Printed "
                         f"**{'-' if s.get('printed') is None else money(s['printed'])}** · Difference "
                         + ("<span class='bad'>type the printed total</span>" if s["id"] is not None and diff is None else
                            "" if s["id"] is None else
