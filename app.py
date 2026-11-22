@@ -332,7 +332,7 @@ def is_reconciled(sources, lines):
         return False
     if any(not l["cat"] or not l["done"] or not l["ok"] for l in lines):
         return False
-    return all(s["diff"] == 0 for s in src_info(sources, lines))
+    return all(s["diff"] in (None, 0) for s in src_info(sources, lines))
 
 
 # ---------------------------------------------------------------- reading scans with Claude
@@ -538,7 +538,7 @@ with st.container(key="zone"):
         why.append(f"{OPEN} line(s) not checked yet")
     if DOUBLES:
         why.append(f"{len(DOUBLES)} possible double entr{'y' if len(DOUBLES) == 1 else 'ies'} to check")
-    bad_docs = sum(1 for s in SI if s["diff"] != 0)
+    bad_docs = sum(1 for s in SI if s["diff"] not in (None, 0))
     if bad_docs:
         why.append(f"{bad_docs} document total(s) do not match yet")
     stamp = (f"<span class='stamp {'ok' if REC else 'bad'}'>{'✓ Reconciled' if REC else 'Not reconciled yet'}</span>"
@@ -746,7 +746,7 @@ if view == "check":
                         "read": r2(sum(l["amt"] for l in man))}, man))
     def _needs(item):
         s, ls = item
-        bad_total = s["id"] is not None and s.get("diff") != 0
+        bad_total = s["id"] is not None and s.get("diff") not in (None, 0)
         return (0 if bad_total else 1)
     groups.sort(key=_needs)
     off = [s for s, _ in groups if s["id"] is not None and s.get("diff") not in (None, 0)]
@@ -761,7 +761,7 @@ if view == "check":
         open_ls = [l for l in real if not l["ok"]]
         diff = s.get("diff")
         spans = s.get("m1") and s.get("m2") and s["m1"] != s["m2"]
-        if not open_ls and (s["id"] is None or diff == 0):
+        if not open_ls and diff in (None, 0):
             finished.append((s, done_ls))      # nothing left to do: not shown under Check
             continue
         mismatch = s["id"] is not None and diff is not None and diff != 0
@@ -780,6 +780,13 @@ if view == "check":
                         if st.button(f"↩ {l['descr'][:28]} · {money(l['amt'])}", key=f"un{l['id']}", width="stretch"):
                             mark_done([l], False)
                             st.rerun()
+                if s["id"] is not None and s["printed"] is None:
+                    st.markdown("**Statement shows a total? (optional)**")
+                    opt = st.number_input("Printed total $", value=None, min_value=0.0, step=0.01, format="%.2f",
+                                          key=f"opt{sid}", placeholder="only if printed")
+                    if opt is not None and st.button("Use this total to double-check", key=f"optb{sid}"):
+                        q("UPDATE mum_sources SET printed=%s WHERE id=%s", (r2(opt), s["id"]))
+                        st.rerun()
                 if s["id"] is not None:
                     st.markdown("**+ Add a missing line to this statement**")
                     with st.form(f"addto{sid}", clear_on_submit=True, border=False):
@@ -801,27 +808,21 @@ if view == "check":
                         if st.button("Remove now", key=f"rm{sid}", type="primary"):
                             q("DELETE FROM mum_sources WHERE id=%s", (s["id"],))
                             st.rerun()
-            # statement total line
-            status = ("" if s["id"] is None else
-                      "<span class='bad'>type the printed total</span>" if diff is None else
-                      f"<span class='{'ok' if diff == 0 else 'bad'}'>{'✓ matches' if diff == 0 else 'does not match'}</span>")
+            # statement total line: worked out from the lines; a printed total is only an optional extra check
+            total_txt = (f"{'Whole document (' + month_name(s['m1']) + ' to ' + month_name(s['m2']) + ')' if spans else 'Total'} "
+                         f"<b>{money(s.get('doc', s['read']))}</b>")
+            if s["id"] is not None and diff is not None:
+                total_txt += (" · printed " + money(s["printed"]) + " · "
+                              + (f"<span class='ok'>✓ matches</span>" if diff == 0 else "<span class='bad'>does not match</span>"))
             st.markdown(f"<span class='ok'>✓ {len(done_ls)} done</span> · {money(sum(l['amt'] for l in done_ls))}"
                         + (f" &nbsp;·&nbsp; <b>{len(open_ls)} to do</b>" if open_ls else "")
-                        + (f"<br>{'Whole document (' + month_name(s['m1']) + ' to ' + month_name(s['m2']) + ')' if spans else 'Lines total'} "
-                           f"<b>{money(s.get('doc', s['read']))}</b> · Printed <b>{'-' if s.get('printed') is None else money(s['printed'])}</b> · {status}"
-                           if s["id"] is not None else ""), unsafe_allow_html=True)
-            if s["id"] is not None and (diff is None or diff != 0):
-                pr = st.number_input("Total printed on the statement $", value=s["printed"], min_value=0.0, step=0.01,
-                                     format="%.2f", key=f"pr{sid}", placeholder="type the total from the statement")
+                        + (f"<br>{total_txt}" if s["id"] is not None else ""), unsafe_allow_html=True)
+            if s["id"] is not None and (mismatch or s["printed"] is not None):
+                pr = st.number_input("Total printed on the statement $ (optional)", value=s["printed"], min_value=0.0,
+                                     step=0.01, format="%.2f", key=f"pr{sid}", placeholder="leave empty if none")
                 if (pr is None) != (s["printed"] is None) or (pr is not None and r2(pr) != s["printed"]):
                     q("UPDATE mum_sources SET printed=%s WHERE id=%s", (None if pr is None else r2(pr), s["id"]))
                     st.rerun()
-                if diff is None and not open_ls:
-                    st.caption("Some statements (for example bank account statements) do not print a total of money out. "
-                               "If you have checked every line against the statement, you can confirm it instead.")
-                    if st.button("This statement has no total: I've checked every line", key=f"nototal{sid}"):
-                        q("UPDATE mum_sources SET printed=%s WHERE id=%s", (r2(s.get("doc", s["read"])), s["id"]))
-                        st.rerun()
             with st.container(key=f"rows{sid}"):
                 for l in open_ls:
                     lid = l["id"]
@@ -923,7 +924,7 @@ if view == "year":
                                       FROM mum_sources s LEFT JOIN mum_lines l ON l.source_id = s.id
                                       GROUP BY s.id, s.label, s.printed""", fetch=True)}
     def doc_problem(d):
-        return d["printed"] is None or r2(float(d["printed"]) - float(d["total"])) != 0
+        return d["printed"] is not None and r2(float(d["printed"]) - float(d["total"])) != 0
     problems = []
     rows = []
     for mo in range(1, 13):
