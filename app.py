@@ -66,6 +66,11 @@ def r2(n):
         return 0.0
 
 
+def same_name(desc):
+    """Name used to spot doubles: letters and digits only, so 'PARIS BAGUETTE -JEM' = 'PARIS BAGUETTE - JEM'."""
+    return re.sub(r"[^A-Z0-9]", "", str(desc or "").upper())
+
+
 def merch(desc):
     words = re.sub(r"[^A-Z ]", " ", str(desc or "").upper()).split()
     return " ".join([w for w in words if len(w) > 1][:3])
@@ -186,7 +191,7 @@ def q(sql, params=None, fetch=False):
                 raise
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 @st.cache_resource
@@ -239,6 +244,9 @@ def refile():
     q("UPDATE mum_lines SET cat = '', ok = FALSE, done = FALSE WHERE cat <> '' AND cat NOT IN %s",
       (tuple(CAT_OPTIONS[1:]),))
     q("DELETE FROM mum_rules WHERE cat NOT IN %s", (tuple(CAT_OPTIONS[1:]),))
+    # statements left with no lines were repeat uploads: tidy them away
+    q("""DELETE FROM mum_sources s WHERE s.kind <> 'bill'
+         AND NOT EXISTS (SELECT 1 FROM mum_lines l WHERE l.source_id = s.id)""")
     q("""UPDATE mum_lines SET month = to_char(tx_date, 'YYYY-MM')
          WHERE tx_date IS NOT NULL AND month <> to_char(tx_date, 'YYYY-MM')""")
     q("""UPDATE mum_sources s SET month = sub.mm
@@ -296,8 +304,7 @@ def find_doubles():
     groups = {}
     for r in rows:
         # a double needs ALL three to match: same date, same amount, same name
-        name = " ".join(str(r["descr"] or "").upper().split())
-        key = (r["tx_date"], r2(r["amt"]), name)
+        key = (r["tx_date"], r2(r["amt"]), same_name(r["descr"]))
         groups.setdefault(key, []).append(r)
     return [g for g in groups.values() if len(g) > 1 and not all(x["dup_ok"] for x in g)]
 
@@ -428,7 +435,7 @@ def read_with_claude(files, kind):
 
 
 def save_reading(m, kind, name, fhash, j, rules):
-    existing = {(r["tx_date"], r2(r["amt"]), " ".join(str(r["descr"] or "").upper().split()))
+    existing = {(r["tx_date"], r2(r["amt"]), same_name(r["descr"]))
                 for r in q("SELECT tx_date, amt, descr FROM mum_lines WHERE NOT dup", fetch=True)}
     if kind == "bill":
         amount = j.get("amount")
@@ -459,8 +466,7 @@ def save_reading(m, kind, name, fhash, j, rules):
             sug = str(l.get("cat") or "").strip().upper()
             cat = rules.get(merch(desc)) or (sug if sug in CAT_OPTIONS else "")
             d = safe_date(l.get("date"), m)
-            name = " ".join(desc.upper().split())
-            if (d, amt, name) in existing:     # already saved from another upload: do not add it twice
+            if (d, amt, same_name(desc)) in existing:     # already saved from another upload: do not add it twice
                 skipped += 1
                 continue
             q("INSERT INTO mum_lines(month,source_id,tx_date,descr,amt,cat) VALUES(%s,%s,%s,%s,%s,%s)",
