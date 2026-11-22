@@ -1,6 +1,6 @@
 """Mum's Monthly Spend: monthly expenditure reconciliation for Susan.
 
-Categories: S Susan (Mum), F Family food, T Transport, G Groceries, U Utilities, M Medical.
+Categories: S Susan (Mum), F Family food, T Transport, G Groceries, U Utilities, M Medical, H Household.
 X = not Mum's spending (left out). Money coming in is never counted.
 A fixed cash amount for groceries (default $500) is added to G every month.
 
@@ -33,6 +33,7 @@ CATS = {
     "G": ("Groceries", "#7a4bd8"),
     "U": ("Utilities", "#c4900a"),
     "M": ("Medical", "#d12f5c"),
+    "H": ("Household", "#5c6b1f"),
 }
 XNAME = "Not Mum's (left out)"
 ALLK = list(CATS)
@@ -292,6 +293,7 @@ G = groceries (NTUC FairPrice, Sheng Siong, Giant, Cold Storage, Prime, Don Don 
 F = family food (restaurants, cafes, hawker, food court, Kopitiam, Koufu, bakery, bubble tea, McDonald's, KFC, GrabFood, foodpanda, Deliveroo)
 U = utilities (SP Group, SP Services, PUB, City Energy, Singtel, StarHub, M1, Circles, MyRepublic, Simba, town council, conservancy)
 M = medical (clinic, polyclinic, hospital, dental, TCM, pharmacy, Guardian, Watsons, Unity, optical, physiotherapy, health screening)
+H = household (things for the home: furniture, appliances, kitchenware, bedding, cleaning supplies, hardware, repairs, aircon servicing, plumber, IKEA, Courts, Harvey Norman, Gain City, Best Denki, Daiso, Mr DIY, Japan Home, Taobao or Shopee orders for the home)
 X = ATM cash withdrawals, transfers between her own accounts, payments to the card account itself
 S = everything else that is Susan's own spending (clothes, personal shopping, hair, gifts, subscriptions, insurance, shopping sites, others)"""
 
@@ -816,7 +818,7 @@ with tab4:
     df = pd.concat([df, pd.DataFrame([tot])], ignore_index=True)
     st.dataframe(df, hide_index=True, width="stretch",
                  column_config={c: st.column_config.NumberColumn(c, format="$%.2f") for c in ALLK + ["Total"]})
-    st.caption("S Susan · F Family food · T Transport · G Groceries (incl. cash) · U Utilities · M Medical. Empty months show blank.")
+    st.caption("S Susan · F Family food · T Transport · G Groceries (incl. cash) · U Utilities · M Medical · H Household. Empty months show blank.")
     st.download_button("Download year CSV", df.to_csv(index=False), file_name=f"Mum spend {y} by month.csv", mime="text/csv")
 
 # ---------------------------------------------------------------- all records (whole database)

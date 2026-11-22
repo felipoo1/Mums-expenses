@@ -1,7 +1,7 @@
 # Mum's Monthly Spend
 
 A simple phone-friendly app for Mum's monthly expenditure, reconciled to:
-S Susan (Mum) · F Family food · T Transport · G Groceries · U Utilities · M Medical.
+S Susan (Mum) · F Family food · T Transport · G Groceries · U Utilities · M Medical · H Household.
 X marks anything that is not Mum's spending. Money coming in is never counted.
 $500 cash for groceries is added to G every month.
 
