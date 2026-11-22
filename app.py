@@ -724,6 +724,7 @@ if view == "check":
     if man:
         groups.append(({"id": None, "label": "Added by hand", "period": "", "printed": None, "diff": None,
                         "read": r2(sum(l["amt"] for l in man))}, man))
+    finished = []
     for s, ls in groups:
         sid = s["id"] if s["id"] is not None else "man"
         real = [l for l in ls if not l.get("dup")]
@@ -731,6 +732,9 @@ if view == "check":
         open_ls = [l for l in real if not l["ok"]]
         diff = s.get("diff")
         spans = s.get("m1") and s.get("m2") and s["m1"] != s["m2"]
+        if not open_ls and (s["id"] is None or diff == 0):
+            finished.append((s, done_ls))      # nothing left to do: not shown under Check
+            continue
         with st.container(border=True):
             hd, mn = st.container(key=f"hdr{sid}").columns([5, 1], vertical_alignment="center")
             hd.markdown(f"#### {s['label']}" + (f" <span class='muted'>· {s['period']}</span>" if s.get("period") else ""),
@@ -789,6 +793,17 @@ if view == "check":
                             if st.button("Delete now", key=f"del{lid}", width="stretch"):
                                 q("DELETE FROM mum_lines WHERE id=%s", (lid,))
                                 st.rerun()
+    if lines and not OPEN and len(finished) == len(groups):
+        st.success("✓ Everything is checked for this month.")
+    if finished:
+        with st.expander(f"✓ {len(finished)} finished statement(s) · {money(sum(sum(l['amt'] for l in d) for _, d in finished))}"):
+            st.caption("Finished statements are kept here only in case something needs undoing.")
+            for s, d in finished:
+                st.markdown(f"**{s['label']}** · {len(d)} line(s) · {money(sum(l['amt'] for l in d))}")
+                for l in d:
+                    if st.button(f"↩ Undo {l['descr'][:30]} · {money(l['amt'])}", key=f"unf{l['id']}"):
+                        mark_done([l], False)
+                        st.rerun()
     if not lines:
         st.info("Upload a statement in step 1 and the lines appear here.")
     with st.expander("+ Add a line by hand"):
