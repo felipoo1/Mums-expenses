@@ -24,7 +24,7 @@ import psycopg2.extras
 import streamlit as st
 from PIL import Image, ImageOps
 
-st.set_page_config(page_title="Mum's Monthly Spend", page_icon="🧾", layout="centered")
+st.set_page_config(page_title="Mum's Monthly Spend", page_icon="🧾", layout="centered", initial_sidebar_state="collapsed")
 
 CATS = {
     "S": ("Susan (Mum)", "#1240e0"),
@@ -71,21 +71,59 @@ def merch(desc):
 # ---------------------------------------------------------------- styling
 st.markdown("""
 <style>
-.block-container{padding-top:1.2rem;max-width:860px}
-h1,h2,h3{letter-spacing:-.01em}
-.big{font-size:44px;font-weight:700;line-height:1;margin:4px 0 6px}
-.stamp{display:inline-block;font-weight:700;padding:6px 12px;border-radius:8px;border:2px solid}
-.ok{color:#0f7a43}.bad{color:#b4231d}
-.bar{display:flex;align-items:center;gap:8px;margin:5px 0}
-.bar .k{color:#fff;font-weight:700;width:30px;height:30px;border-radius:7px;display:flex;align-items:center;justify-content:center;flex:none}
-.bar .t{flex:1;height:26px;border:1px solid #d5dcf0;border-radius:6px;position:relative;overflow:hidden;min-width:0}
-.bar .t i{position:absolute;left:0;top:0;bottom:0}
-.bar .t span{position:absolute;left:8px;top:3px;font-size:13px;white-space:nowrap}
-.bar .v{width:92px;text-align:right;font-weight:600;flex:none}
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
+/* Datasheet look from the mock-up: cobalt strip, pale cobalt zone, Space Grotesk numbers, Inter text */
+:root{--co:#1240e0;--zone:#eef2ff;--line:#d5dcf0;--ink:#0b0d12;--mute:#5a6275;--ok:#0f7a43;--bad:#b4231d}
+html,body,[class*="css"],.stApp,.stMarkdown,p,li,label,input,select,textarea,button{font-family:Inter,system-ui,sans-serif!important}
+h1,h2,h3,h4,.big,.num,.bar .k,.bar .v{font-family:"Space Grotesk",Inter,sans-serif!important;letter-spacing:-.01em}
+header[data-testid="stHeader"],#MainMenu,footer,[data-testid="stToolbar"],[data-testid="stDecoration"],[data-testid="stStatusWidget"]{display:none!important}
+.stApp{background:#fff;color:var(--ink)}
+body{overflow-x:hidden}
+.block-container{padding-top:0!important;padding-bottom:3rem;max-width:1000px}
+h3{font-size:24px!important;font-weight:600!important;margin:6px 0 2px!important}
+h4{font-size:19px!important;font-weight:600!important;margin:0!important}
+/* full-width bands */
+.st-key-strip,.st-key-zone{width:100vw!important;max-width:100vw!important;margin-left:calc(50% - 50vw)!important;margin-right:0!important;
+  padding-left:max(5vw,16px)!important;padding-right:max(5vw,16px)!important}
+.st-key-strip{background:var(--co);padding-top:14px!important;padding-bottom:14px!important}
+.st-key-strip h1{color:#fff!important;font-size:22px!important;font-weight:700!important;margin:0!important;padding:0!important}
+.st-key-strip button{background:rgba(255,255,255,.15)!important;color:#fff!important;border:0!important;font-size:18px!important}
+.st-key-strip [data-baseweb="select"]>div{background:rgba(255,255,255,.15)!important;border:1px solid rgba(255,255,255,.35)!important;border-radius:10px!important;color:#fff!important;font:600 17px "Space Grotesk",Inter,sans-serif!important}
+.st-key-strip [data-baseweb="select"] svg{fill:#fff!important}
+.st-key-zone{background:var(--zone);padding-top:clamp(18px,3vw,36px)!important;padding-bottom:clamp(18px,3vw,36px)!important;margin-bottom:18px}
+.big{font-size:clamp(40px,7vw,64px);font-weight:700;line-height:1;margin:6px 0 10px;white-space:nowrap}
+.stamp{display:inline-block;font:700 15px "Space Grotesk",Inter,sans-serif;padding:6px 12px;border-radius:8px;border:2px solid;margin-top:10px}
+.ok{color:var(--ok)}.bad{color:var(--bad)}
+.muted{color:var(--mute);font-size:13px}
+.bar{display:grid;grid-template-columns:34px minmax(0,1fr) 96px;gap:10px;align-items:center;margin:0 0 9px}
+.bar .k{color:#fff;font-weight:700;font-size:17px;width:34px;height:34px;border-radius:8px;display:grid;place-items:center}
+.bar .t{height:30px;background:#fff;border:1px solid var(--line);border-radius:6px;position:relative;overflow:hidden}
+.bar .t i{position:absolute;left:0;top:0;bottom:0;border-radius:5px;transition:width .5s}
+.bar .t span{position:absolute;left:10px;top:4px;font-size:14px;font-weight:500;white-space:nowrap}
+.bar .v{text-align:right;font-weight:600;font-size:17px;white-space:nowrap}
 .pill{color:#fff;font-size:12px;font-weight:600;padding:2px 8px;border-radius:99px;white-space:nowrap}
-.line{border:1px solid #e3e7f3;border-radius:10px;padding:10px 12px;margin-bottom:6px}
-.muted{color:#6b7280;font-size:13px}
-div[data-testid="stButton"] button{min-height:44px}
+/* cards, buttons, inputs */
+[data-testid="stVerticalBlockBorderWrapper"]:has(>div>[data-testid="stVerticalBlock"]){border-radius:14px!important}
+div[data-testid="stVerticalBlockBorderWrapper"]{border-color:var(--line)!important}
+.stButton button,.stDownloadButton button{min-height:44px;border-radius:10px!important;font-weight:600!important;border:1px solid var(--line)}
+.stButton button[kind="primary"],.stDownloadButton button[kind="primary"]{background:var(--co)!important;border-color:var(--co)!important;color:#fff!important}
+[data-baseweb="select"]>div,[data-baseweb="input"],.stNumberInput input,.stTextInput input,.stDateInput input{border-radius:8px!important;font-size:16px!important}
+table{width:100%;border-collapse:collapse;font-size:15px}
+td{padding:7px 6px;border-bottom:1px solid var(--line)}
+[class*="st-key-hdr"] [data-testid="stHorizontalBlock"],.st-key-mnav [data-testid="stHorizontalBlock"]{flex-wrap:nowrap!important;gap:6px!important}
+[class*="st-key-hdr"] [data-testid="stColumn"],.st-key-mnav [data-testid="stColumn"]{min-width:0!important}
+/* compact line rows: keep the row on one line, also on phones */
+[class*="st-key-rows"] [data-testid="stHorizontalBlock"]{flex-wrap:nowrap!important;gap:6px!important;align-items:center;
+  border-top:1px solid var(--line);padding:8px 0 2px}
+[class*="st-key-rows"] [data-testid="stColumn"]{min-width:0!important;flex-shrink:1!important}
+[class*="st-key-rows"] .ln{font-size:14px;line-height:1.3;overflow:hidden;text-overflow:ellipsis}
+[class*="st-key-rows"] .ln b:first-child{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+[class*="st-key-rows"] [data-baseweb="select"]>div{min-height:40px;font-size:14px!important}
+[class*="st-key-rows"] button{min-height:40px!important;padding:0 4px!important}
+[data-testid="stSidebar"],[data-testid="stSidebarCollapsedControl"]{display:none!important}
+/* section menu */
+.st-key-nav [data-testid="stButtonGroup"] button{min-height:44px;font-weight:600}
+@media (prefers-reduced-motion:reduce){.bar .t i{transition:none}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -454,13 +492,15 @@ cur = st.session_state.month
 st.session_state.setdefault("pick_m", MN[int(cur[5:]) - 1])
 st.session_state.setdefault("pick_y", int(cur[:4]))
 
-st.title("Mum's monthly spend")
-c1, c2, c3, c4 = st.columns([1, 3, 2, 1], vertical_alignment="bottom")
-c1.button("‹", on_click=shift_month, args=(-1,), width="stretch", help="Previous month")
-c2.selectbox("Month", MN, key="pick_m", on_change=pick_changed)
-years = sorted({today.year - 2, today.year - 1, today.year, today.year + 1, int(cur[:4])})
-c3.selectbox("Year", years, key="pick_y", on_change=pick_changed)
-c4.button("›", on_click=shift_month, args=(1,), width="stretch", help="Next month")
+with st.container(key="strip"):
+    t, navc = st.columns([2, 3], vertical_alignment="center")
+    t.markdown("# Mum's monthly spend")
+    c1, c2, c3, c4 = navc.container(key="mnav").columns([1, 3, 2, 1], vertical_alignment="center", gap="small")
+    c1.button("‹", on_click=shift_month, args=(-1,), width="stretch", help="Previous month")
+    c2.selectbox("Month", MN, key="pick_m", on_change=pick_changed, label_visibility="collapsed")
+    years = sorted({today.year - 2, today.year - 1, today.year, today.year + 1, int(cur[:4])})
+    c3.selectbox("Year", years, key="pick_y", on_change=pick_changed, label_visibility="collapsed")
+    c4.button("›", on_click=shift_month, args=(1,), width="stretch", help="Next month")
 
 cur = st.session_state.month
 mlabel = f"{MN[int(cur[5:]) - 1]} {cur[:4]}"
@@ -468,39 +508,46 @@ cash, sources, lines = load_month(cur)
 T, C, SPEND = totals(cash, lines)
 SI = src_info(sources, lines)
 REC = is_reconciled(sources, lines)
+DOUBLES = find_doubles()
+OPEN = sum(1 for l in lines if not l["ok"] and not l.get("dup"))
 
 # ---------------------------------------------------------------- summary picture
-st.markdown(f"<div class='muted'>Total spend for {mlabel}</div><div class='big'>{money(SPEND)}</div>"
-            f"<div class='muted'>Includes {money(cash)} cash for groceries. Money coming in is never counted.</div>",
-            unsafe_allow_html=True)
-mx = max([T[k] for k in ALLK] + [1])
-st.markdown("".join(
-    f"<div class='bar'><span class='k' style='background:{c}'>{k}</span><div class='t'>"
-    f"<i style='width:{T[k] / mx * 100:.1f}%;background:{c}33;border-right:3px solid {c}'></i><span>{n}</span></div>"
-    f"<span class='v'>{money(T[k])}</span></div>" for k, (n, c) in CATS.items()), unsafe_allow_html=True)
-if lines:
-    waiting = sum(1 for l in lines if not l["ok"] and not l.get("dup"))
-    DOUBLES = find_doubles()
-    unticked = 0
-    bad_docs = sum(1 for s in SI if s["diff"] != 0)
+with st.container(key="zone"):
+    left, right = st.columns([2, 3], gap="large", vertical_alignment="center")
     why = []
-    if waiting:
-        why.append(f"{waiting} line(s) not checked yet")
-    if unticked:
-        why.append(f"{unticked} line(s) not ticked in step 3")
+    if OPEN:
+        why.append(f"{OPEN} line(s) not checked yet")
     if DOUBLES:
         why.append(f"{len(DOUBLES)} possible double entr{'y' if len(DOUBLES) == 1 else 'ies'} to check")
+    bad_docs = sum(1 for s in SI if s["diff"] != 0)
     if bad_docs:
         why.append(f"{bad_docs} document total(s) do not match yet")
-    st.markdown(f"<p><span class='stamp {'ok' if REC else 'bad'}'>{'✓ Reconciled' if REC else 'Not reconciled yet'}</span>"
-                f"<br><span class='muted'>{'. '.join(why)}</span></p>", unsafe_allow_html=True)
+    stamp = (f"<span class='stamp {'ok' if REC else 'bad'}'>{'✓ Reconciled' if REC else 'Not reconciled yet'}</span>"
+             f"<br><span class='muted'>{'. '.join(why)}</span>") if lines else \
+        "<span class='muted'>No documents uploaded for this month yet.</span>"
+    left.markdown(f"<div class='muted' style='font-size:15px'>Total spend for {mlabel}</div><div class='big'>{money(SPEND)}</div>"
+                  f"<div class='muted'>Includes {money(cash)} cash for groceries. Money coming in is never counted.</div>"
+                  f"{stamp}", unsafe_allow_html=True)
+    mx = max([T[k] for k in ALLK] + [1])
+    right.markdown("".join(
+        f"<div class='bar'><span class='k' style='background:{c}'>{k}</span><div class='t'>"
+        f"<i style='width:{T[k] / mx * 100:.1f}%;background:{c}33;border-right:3px solid {c}'></i><span>{n}"
+        f"{' · incl. cash' if k == 'G' and cash else ''}</span></div>"
+        f"<span class='v'>{money(T[k])}</span></div>" for k, (n, c) in CATS.items()), unsafe_allow_html=True)
 
-tab1, tab2, tab4, tab5 = st.tabs(["1 · Upload",
-                                  f"2 · Check ({sum(1 for l in lines if not l['ok'] and not l.get('dup'))})",
-                                  "3 · Year", "All records"])
+# ---------------------------------------------------------------- section menu (remembers where you are)
+VIEWS = ["upload", "check", "year", "all"]
+if st.session_state.get("view") not in VIEWS:   # first visit, or the current section was tapped again
+    st.session_state.view = st.session_state.get("last_view") or ("check" if lines else "upload")
+with st.container(key="nav"):
+    st.segmented_control("Section", VIEWS, key="view", label_visibility="collapsed", width="stretch",
+                         format_func=lambda v: {"upload": "Upload", "check": f"Check ({OPEN})" if OPEN else "Check ✓",
+                                                "year": "Year", "all": "Records"}[v])
+view = st.session_state.get("view") or "check"
+st.session_state.last_view = view
 
 # ---------------------------------------------------------------- 1 upload
-with tab1:
+if view == "upload":
     st.subheader("Upload this month's documents")
     st.caption("PDFs downloaded from the bank or SP app are best. Photos also work: take them flat, in good light, with the whole page showing. "
                "You can upload several months at once: every line is filed under the month of its own date.")
@@ -537,8 +584,7 @@ with tab1:
                 except Exception as e:  # noqa: BLE001
                     st.error(f"✗ {name}: could not be read. Please try again or use a clearer copy. ({type(e).__name__})")
         st.session_state.up_key += 1
-        st.button("Done, show me the lines", type="primary")
-        st.caption("Then open tab 2 · Check.")
+        st.button("Done, check the lines", type="primary", on_click=lambda: st.session_state.update(view="check"))
     if sources:
         st.markdown("**Already uploaded this month**")
         for s in SI:
@@ -593,40 +639,34 @@ def month_csv():
     return pd.DataFrame(rows).to_csv(index=False)
 
 
+SHORT = {"": "–", "X": "X Not Mum's", **{k: f"{k} {v[0]}" for k, v in CATS.items()}}
+
+
 def cb_cat(lid, desc):
     v = st.session_state.get(f"cat{lid}", "")
     q("UPDATE mum_lines SET cat=%s WHERE id=%s", (v, lid))
-    if not v:   # no letter = cannot stay checked
-        q("UPDATE mum_lines SET ok=FALSE, done=FALSE WHERE id=%s", (lid,))
-        st.session_state.pop(f"tk{lid}", None)
-    else:
+    if v:
         save_rule(desc, v)
 
 
-def cb_amt(lid):
-    v = st.session_state.get(f"amt{lid}")
-    q("UPDATE mum_lines SET amt=%s, ok=FALSE, done=FALSE WHERE id=%s", (r2(v), lid))
-    st.session_state.pop(f"tk{lid}", None)
-
-
-def cb_tick(lid):
-    v = bool(st.session_state.get(f"tk{lid}"))
-    q("UPDATE mum_lines SET ok=%s, done=%s WHERE id=%s", (v, v, lid))
-
-
-def tick_many(ls, value):
+def mark_done(ls, value=True):
     ids = [l["id"] for l in ls]
     if ids:
         q("UPDATE mum_lines SET ok=%s, done=%s WHERE id = ANY(%s)", (value, value, ids))
-    for l in ls:
-        st.session_state.pop(f"tk{l['id']}", None)
+    if value:
+        for l in ls:
+            save_rule(l["descr"], l["cat"])
 
 
-with tab2:
-    st.subheader(f"Check each line: {mlabel}")
-    st.caption("For each line: make sure the letter is right, then tick it once it matches the statement. "
-               "Ticked lines drop out of view so you can see what is left. X means not Mum's spending.")
-    doubles = find_doubles()
+def cb_done(lid, desc):
+    cat = st.session_state.get(f"cat{lid}", "")
+    if cat:
+        q("UPDATE mum_lines SET cat=%s, ok=TRUE, done=TRUE WHERE id=%s", (cat, lid))
+        save_rule(desc, cat)
+
+
+if view == "check":
+    doubles = DOUBLES
     if doubles:
         extras = [(g[0], r) for g in doubles for r in g[1:]]   # first copy is always kept
         st.error(f"⚠ {len(extras)} double entr{'y' if len(extras) == 1 else 'ies'} found: "
@@ -665,21 +705,19 @@ with tab2:
             st.success(f"Deleted {len(chosen)} double entr{'y' if len(chosen) == 1 else 'ies'}.")
             st.rerun()
 
-    n_all = sum(1 for l in lines if not l.get("dup"))
-    n_ok = sum(1 for l in lines if l["ok"] and not l.get("dup"))
-    if lines:
-        st.markdown(f"**{n_ok} of {n_all}** lines checked")
-        st.progress(n_ok / n_all if n_all else 1.0)
-    can_tick = [l for l in lines if l["cat"] and not l["ok"] and not l.get("dup")]
-    if can_tick and st.button(f"✓ Tick all {len(can_tick)} line(s) that have a letter", type="primary"):
-        tick_many(can_tick, True)
-        st.rerun()
-    show_all = st.toggle("Show checked lines too", value=False)
 
-    new_cash = st.number_input("Cash for groceries this month $", value=float(cash), min_value=0.0, step=10.0, format="%.2f")
-    if r2(new_cash) != r2(cash):
-        set_cash(cur, new_cash)
-        st.rerun()
+    if lines:
+        n_all = sum(1 for l in lines if not l.get("dup"))
+        st.markdown(f"**{n_all - OPEN} of {n_all}** lines done" + ("" if OPEN else " <span class='ok'>✓ all done</span>"),
+                    unsafe_allow_html=True)
+        st.progress((n_all - OPEN) / n_all if n_all else 1.0)
+    ready = [l for l in lines if l["cat"] and not l["ok"] and not l.get("dup")]
+    if ready:
+        st.caption("Each line shows the letter Claude suggests. Change it if it is wrong, then press ✓. "
+                   "Done lines go into their statement's total.")
+        if st.button(f"✓ Mark all {len(ready)} as done (letters look right)", type="primary", width="stretch"):
+            mark_done(ready)
+            st.rerun()
 
     groups = [(s, s["lines"]) for s in SI]
     man = [l for l in lines if l["source_id"] is None]
@@ -687,77 +725,70 @@ with tab2:
         groups.append(({"id": None, "label": "Added by hand", "period": "", "printed": None, "diff": None,
                         "read": r2(sum(l["amt"] for l in man))}, man))
     for s, ls in groups:
+        sid = s["id"] if s["id"] is not None else "man"
+        real = [l for l in ls if not l.get("dup")]
+        done_ls = [l for l in real if l["ok"]]
+        open_ls = [l for l in real if not l["ok"]]
+        diff = s.get("diff")
+        spans = s.get("m1") and s.get("m2") and s["m1"] != s["m2"]
         with st.container(border=True):
-            st.markdown(f"#### {s['label']}" + (f" · {s['period']}" if s.get("period") else ""))
-            if s["id"] is not None:
-                pr = st.number_input("Total printed on the document $", value=s["printed"], min_value=0.0, step=0.01,
-                                     format="%.2f", key=f"pr{s['id']}", placeholder="type the total from the statement")
+            hd, mn = st.container(key=f"hdr{sid}").columns([5, 1], vertical_alignment="center")
+            hd.markdown(f"#### {s['label']}" + (f" <span class='muted'>· {s['period']}</span>" if s.get("period") else ""),
+                        unsafe_allow_html=True)
+            with mn.popover("⋯", width="stretch"):
+                if done_ls:
+                    st.markdown("**Undo a done line**")
+                    for l in done_ls:
+                        if st.button(f"↩ {l['descr'][:28]} · {money(l['amt'])}", key=f"un{l['id']}", width="stretch"):
+                            mark_done([l], False)
+                            st.rerun()
+                if s["id"] is not None:
+                    st.markdown("**Remove this whole document**")
+                    if st.checkbox("Yes, remove it and all its lines", key=f"rmok{sid}"):
+                        if st.button("Remove now", key=f"rm{sid}", type="primary"):
+                            q("DELETE FROM mum_sources WHERE id=%s", (s["id"],))
+                            st.rerun()
+            # statement total line
+            status = ("" if s["id"] is None else
+                      "<span class='bad'>type the printed total</span>" if diff is None else
+                      f"<span class='{'ok' if diff == 0 else 'bad'}'>{'✓ matches' if diff == 0 else 'off by ' + money(diff)}</span>")
+            st.markdown(f"<span class='ok'>✓ {len(done_ls)} done</span> · {money(sum(l['amt'] for l in done_ls))}"
+                        + (f" &nbsp;·&nbsp; <b>{len(open_ls)} to do</b>" if open_ls else "")
+                        + (f"<br>{'Whole document (' + month_name(s['m1']) + ' to ' + month_name(s['m2']) + ')' if spans else 'Lines total'} "
+                           f"<b>{money(s.get('doc', s['read']))}</b> · Printed <b>{'-' if s.get('printed') is None else money(s['printed'])}</b> · {status}"
+                           if s["id"] is not None else ""), unsafe_allow_html=True)
+            if s["id"] is not None and (diff is None or diff != 0):
+                pr = st.number_input("Total printed on the statement $", value=s["printed"], min_value=0.0, step=0.01,
+                                     format="%.2f", key=f"pr{sid}", placeholder="type the total from the statement")
                 if (pr is None) != (s["printed"] is None) or (pr is not None and r2(pr) != s["printed"]):
                     q("UPDATE mum_sources SET printed=%s WHERE id=%s", (None if pr is None else r2(pr), s["id"]))
                     st.rerun()
-            real = [l for l in ls if not l.get("dup")]
-            open_ls = [l for l in real if not l["ok"]]
-            tickable = [l for l in open_ls if l["cat"]]
-            if tickable and st.button(f"Tick all {len(tickable)} here", key=f"ta{s['id']}"):
-                tick_many(tickable, True)
-                st.rerun()
-            shown = ls if show_all else open_ls
-            for l in shown:
-                lid = l["id"]
-                with st.container(border=True):
-                    st.markdown(f"**{l['descr'] or '(no description)'}**  \n<span class='muted'>"
-                                f"{l['tx_date']:%d/%m/%Y}</span>" if l["tx_date"] else f"**{l['descr']}**",
-                                unsafe_allow_html=True)
-                    if l.get("dup"):
-                        st.markdown(pill("X", True) + f" **{money(l['amt'])}**", unsafe_allow_html=True)
-                        continue
-                    a, b = st.columns([3, 2])
-                    a.selectbox("Category", CAT_OPTIONS,
-                                index=CAT_OPTIONS.index(l["cat"]) if l["cat"] in CAT_OPTIONS else 0,
-                                format_func=cat_label, key=f"cat{lid}", on_change=cb_cat, args=(lid, l["descr"]))
-                    b.number_input("Amount $", value=float(l["amt"]), min_value=0.0, step=0.01, format="%.2f",
-                                   key=f"amt{lid}", on_change=cb_amt, args=(lid,))
-                    st.checkbox("✓ Checked against the statement", value=bool(l["ok"]), key=f"tk{lid}",
-                                on_change=cb_tick, args=(lid,), disabled=not l["cat"],
-                                help=None if l["cat"] else "Choose a letter first")
-                    with st.expander("Change date or description, or delete"):
+            with st.container(key=f"rows{sid}"):
+                for l in open_ls:
+                    lid = l["id"]
+                    c1, c2, c3, c4 = st.columns([5, 4, 1.3, 1.3], vertical_alignment="center", gap="small")
+                    c1.markdown(f"<div class='ln'><b>{l['descr'] or '(no description)'}</b><br><span class='muted'>"
+                                f"{l['tx_date']:%d/%m} · </span><b>{money(l['amt'])}</b></div>", unsafe_allow_html=True)
+                    c2.selectbox("Letter", CAT_OPTIONS, index=CAT_OPTIONS.index(l["cat"]) if l["cat"] in CAT_OPTIONS else 0,
+                                 format_func=lambda k: SHORT[k], key=f"cat{lid}", label_visibility="collapsed",
+                                 on_change=cb_cat, args=(lid, l["descr"]))
+                    c3.button("✓", key=f"ok{lid}", type="primary", width="stretch", on_click=cb_done,
+                              args=(lid, l["descr"]), disabled=not st.session_state.get(f"cat{lid}", l["cat"]),
+                              help="Done")
+                    with c4.popover("✎", width="stretch"):
                         nd = st.date_input("Date", value=l["tx_date"] or date(int(cur[:4]), int(cur[5:]), 1),
                                            key=f"dt{lid}", format="DD/MM/YYYY")
                         ns = st.text_input("Description", value=l["descr"] or "", key=f"ds{lid}")
-                        x, y = st.columns(2)
-                        if x.button("Save", key=f"sv{lid}", width="stretch"):
-                            q("UPDATE mum_lines SET tx_date=%s, descr=%s, month=%s WHERE id=%s", (nd, ns, ym(nd), lid))
+                        na = st.number_input("Amount $", value=float(l["amt"]), min_value=0.0, step=0.01,
+                                             format="%.2f", key=f"am{lid}")
+                        if st.button("Save", key=f"sv{lid}", type="primary", width="stretch"):
+                            q("UPDATE mum_lines SET tx_date=%s, descr=%s, amt=%s, month=%s WHERE id=%s",
+                              (nd, ns, r2(na), ym(nd), lid))
                             st.rerun()
-                        if y.button("Delete line", key=f"del{lid}", width="stretch"):
-                            st.session_state[f"confirm_del{lid}"] = True
-                        if st.session_state.get(f"confirm_del{lid}"):
-                            st.warning("Delete this line? Only do this if it is not real spending.")
-                            if st.button("Yes, delete", key=f"del2{lid}"):
+                        if st.checkbox("Delete this line (not real spending)", key=f"delok{lid}"):
+                            if st.button("Delete now", key=f"del{lid}", width="stretch"):
                                 q("DELETE FROM mum_lines WHERE id=%s", (lid,))
                                 st.rerun()
-            if not shown and ls:
-                st.markdown("<span class='ok'>✓ Every line here is checked</span>", unsafe_allow_html=True)
-            diff = s.get("diff")
-            spans = s.get("m1") and s.get("m2") and s["m1"] != s["m2"]
-            if spans:
-                st.markdown(f"This month's part: **{money(s['read'])}** ({len(ls)} line(s)). "
-                            f"<span class='muted'>This document also has lines in other months "
-                            f"({month_name(s['m1'])} to {month_name(s['m2'])}), so it is checked as a whole below.</span>",
-                            unsafe_allow_html=True)
-            st.markdown(f"{'Whole document: lines' if spans else 'Total of lines'} **{money(s.get('doc', s['read']))}** · Printed "
-                        f"**{'-' if s.get('printed') is None else money(s['printed'])}** · Difference "
-                        + ("<span class='bad'>type the printed total</span>" if s["id"] is not None and diff is None else
-                           "" if s["id"] is None else
-                           f"<span class='{'ok' if diff == 0 else 'bad'}'>{'✓ $0.00' if diff == 0 else money(diff)}</span>"),
-                        unsafe_allow_html=True)
-            if s["id"] is not None:
-                if st.button("Remove this document and its lines", key=f"rm{s['id']}"):
-                    st.session_state[f"confirm_rm{s['id']}"] = True
-                if st.session_state.get(f"confirm_rm{s['id']}"):
-                    st.warning("This removes the document and all its lines.")
-                    if st.button("Yes, remove it", key=f"rm2{s['id']}"):
-                        q("DELETE FROM mum_sources WHERE id=%s", (s["id"],))
-                        st.rerun()
     if not lines:
         st.info("Upload a statement in step 1 and the lines appear here.")
     with st.expander("+ Add a line by hand"):
@@ -776,6 +807,10 @@ with tab2:
 
 
     st.markdown("### Reconciliation report")
+    new_cash = st.number_input("Cash for groceries this month $", value=float(cash), min_value=0.0, step=10.0, format="%.2f")
+    if r2(new_cash) != r2(cash):
+        set_cash(cur, new_cash)
+        st.rerun()
     a, b = st.columns(2)
     with a:
         st.markdown("**Summary by category**")
@@ -804,7 +839,7 @@ with tab2:
 
 
 # ---------------------------------------------------------------- 4 year
-with tab4:
+if view == "year":
     y = cur[:4]
     st.subheader(f"Monthly breakdown for {y}")
     allm = q("SELECT month,cash FROM mum_months WHERE month LIKE %s", (y + "-%",), True)
@@ -833,7 +868,7 @@ with tab4:
     st.download_button("Download year CSV", df.to_csv(index=False), file_name=f"Mum spend {y} by month.csv", mime="text/csv")
 
 # ---------------------------------------------------------------- all records (whole database)
-with tab5:
+if view == "all":
     st.subheader("All records")
     st.caption("Every line from every month in one place, plus the monthly cash for groceries.")
     rows = q("""SELECT l.month, l.tx_date, l.descr, l.amt, l.cat, l.done, l.ok, l.dup,
@@ -871,11 +906,8 @@ with tab5:
         st.download_button("Download these records (CSV)", v.to_csv(index=False),
                            file_name=f"Mum spend records {m_from} to {m_to}.csv", mime="text/csv")
 
-with st.sidebar:
-    st.markdown("### How to use")
-    st.markdown("1. Pick the month at the top.\n2. **Upload**: statements first, then switch to Utility bill.\n"
-                "3. **Check**: type each statement's printed total, make sure each letter is right, tick each line.\n"
+with st.expander("How to use this app"):
+    st.markdown("1. Pick the month at the top.\n2. **Upload**: bank or card statements, then switch to Utility bill.\n"
+                "3. **Check**: type each statement's printed total. Check each line's letter and press ✓. "
+                "Done lines go into their statement's total.\n"
                 "4. When the stamp says **Reconciled**, download the report.")
-    if str(st.secrets.get("APP_PIN", "")).strip() and st.button("Log out"):
-        st.session_state.authed = False
-        st.rerun()
