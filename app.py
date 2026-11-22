@@ -136,7 +136,7 @@ def q(sql, params=None, fetch=False):
                 raise
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 @st.cache_resource
@@ -174,6 +174,8 @@ def ensure_schema(_v=SCHEMA_VERSION):
     ALTER TABLE mum_sources ENABLE ROW LEVEL SECURITY;
     ALTER TABLE mum_lines ENABLE ROW LEVEL SECURITY;
     ALTER TABLE mum_rules ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE mum_lines ADD COLUMN IF NOT EXISTS dup BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE mum_lines ADD COLUMN IF NOT EXISTS dup_ok BOOLEAN NOT NULL DEFAULT FALSE;
     """)
     # v2: every line is filed under the month of its own transaction date,
     # and each document under the month most of its lines fall in.
@@ -228,6 +230,19 @@ def save_rule(desc, cat):
     m = merch(desc)
     if m and cat:
         q("INSERT INTO mum_rules(merchant,cat) VALUES(%s,%s) ON CONFLICT(merchant) DO UPDATE SET cat=EXCLUDED.cat", (m, cat))
+
+
+def find_doubles():
+    """Groups of lines (any month) with the same date, amount and shop that are not yet decided."""
+    rows = q("""SELECT l.id, l.month, l.tx_date, l.descr, l.amt, l.cat, l.dup, l.dup_ok,
+                       COALESCE(s.label, 'Added by hand') AS source, COALESCE(s.name, '') AS file
+                FROM mum_lines l LEFT JOIN mum_sources s ON s.id = l.source_id
+                WHERE NOT l.dup""", fetch=True)
+    groups = {}
+    for r in rows:
+        key = (r["tx_date"], r2(r["amt"]), merch(r["descr"]))
+        groups.setdefault(key, []).append(r)
+    return [g for g in groups.values() if len(g) > 1 and not all(x["dup_ok"] for x in g)]
 
 
 # ---------------------------------------------------------------- calculations
@@ -456,6 +471,7 @@ st.markdown("".join(
     f"<span class='v'>{money(T[k])}</span></div>" for k, (n, c) in CATS.items()), unsafe_allow_html=True)
 if lines:
     waiting = sum(1 for l in lines if not l["done"])
+    DOUBLES = find_doubles()
     unticked = sum(1 for l in lines if l["done"] and not l["ok"])
     bad_docs = sum(1 for s in SI if s["diff"] != 0)
     why = []
@@ -463,6 +479,8 @@ if lines:
         why.append(f"{waiting} line(s) still in step 2")
     if unticked:
         why.append(f"{unticked} line(s) not ticked in step 3")
+    if DOUBLES:
+        why.append(f"{len(DOUBLES)} possible double entr{'y' if len(DOUBLES) == 1 else 'ies'} to check in step 2")
     if bad_docs:
         why.append(f"{bad_docs} document total(s) do not match yet")
     st.markdown(f"<p><span class='stamp {'ok' if REC else 'bad'}'>{'✓ Reconciled' if REC else 'Not reconciled yet'}</span>"
@@ -521,6 +539,29 @@ with tab2:
     st.subheader("Check and tag each line")
     st.caption("Claude suggests a letter. If it is right press ✓. If not, choose the right letter and press ✓. "
                "The line then moves to step 3. X means not Mum's spending.")
+    doubles = find_doubles()
+    if doubles:
+        st.error(f"⚠ {len(doubles)} possible double entr{'y' if len(doubles) == 1 else 'ies'} found "
+                 "(same date, same amount, same shop). Please check each one.")
+        st.caption("Usually this happens when two statements overlap, for example a 3-month history and a monthly "
+                   "statement. If it is really the same spending twice, leave one copy out. If Mum truly paid twice "
+                   "(for example two rides on the same day), keep both.")
+        for gi, g in enumerate(doubles):
+            with st.container(border=True):
+                first = g[0]
+                st.markdown(f"**{first['descr']}** · {first['tx_date']:%d/%m/%Y} · **{money(first['amt'])}** "
+                            f"· appears {len(g)} times")
+                for i, r in enumerate(g):
+                    a, b = st.columns([3, 2], vertical_alignment="center")
+                    a.markdown(f"Copy {i + 1}: from **{r['source']}**"
+                               + (f" <span class='muted'>({r['file']})</span>" if r["file"] else ""),
+                               unsafe_allow_html=True)
+                    if b.button("Leave this copy out", key=f"dupx{r['id']}", width="stretch"):
+                        q("UPDATE mum_lines SET dup=TRUE, cat='X', done=TRUE, ok=TRUE WHERE id=%s", (r["id"],))
+                        st.rerun()
+                if st.button("Not a double: keep all copies", key=f"dupok{gi}"):
+                    q("UPDATE mum_lines SET dup_ok=TRUE WHERE id = ANY(%s)", ([r["id"] for r in g],))
+                    st.rerun()
     todo = [l for l in lines if not l["done"]]
     if lines:
         st.markdown(f"**{len(todo)} line(s) waiting** · {len(lines) - len(todo)} done and moved to step 3")
@@ -578,7 +619,9 @@ with tab2:
                     st.rerun()
 
 # ---------------------------------------------------------------- 3 reconcile
-def pill(k):
+def pill(k, dup=False):
+    if dup:
+        return "<span class='pill' style='background:#6b7280'>Double entry · left out</span>"
     if not k:
         return "<span class='bad'>not tagged</span>"
     col = CATS[k][1] if k in CATS else "#6b7280"
@@ -589,7 +632,7 @@ def report_html():
     rows = "".join(f"<tr><td>{cat_label(k)}</td><td class=n>{money(T[k])}</td></tr>" for k in ALLK)
     srcs = ""
     for s in SI:
-        ls = "".join(f"<tr><td>{l['tx_date'] or ''}</td><td>{l['descr']}</td><td>{cat_label(l['cat'])}</td>"
+        ls = "".join(f"<tr><td>{l['tx_date'] or ''}</td><td>{l['descr']}</td><td>{'Double entry (left out)' if l.get('dup') else cat_label(l['cat'])}</td>"
                      f"<td class=n>{money(l['amt'])}</td><td>{'✓' if l['ok'] else '✗'}</td></tr>" for l in s["lines"])
         srcs += (f"<h3>{s['label']} · {s['period'] or ''}</h3><table><tr><th>Date</th><th>Description</th><th>Category</th>"
                  f"<th class=n>Amount</th><th>Checked</th></tr>{ls}<tr class=t><td></td><td>Total of lines</td><td></td>"
@@ -640,7 +683,7 @@ with tab3:
         st.markdown("**Reconciliation**")
         st.markdown(f"""<table style='width:100%'>
 <tr><td>Spending read from documents</td><td style='text-align:right'>{money(read)}</td></tr>
-<tr><td>Less: not Mum's (X)</td><td style='text-align:right'>({money(T['X'])})</td></tr>
+<tr><td>Less: not Mum's or double entries (X)</td><td style='text-align:right'>({money(T['X'])})</td></tr>
 <tr><td>Less: not tagged yet</td><td style='text-align:right'>({money(T[''])})</td></tr>
 <tr><td>Add: cash for groceries</td><td style='text-align:right'>{money(cash)}</td></tr>
 <tr><td><b>Total allocated</b></td><td style='text-align:right'><b>{money(calc)}</b></td></tr>
@@ -683,14 +726,14 @@ with tab3:
                     st.rerun()
             for l in done_ls:
                 c1, c2, c3 = st.columns([6, 2, 2], vertical_alignment="center")
-                c1.markdown(f"{l['descr']}  \n<span class='muted'>{l['tx_date'] or ''}</span> {pill(l['cat'])} "
+                c1.markdown(f"{l['descr']}  \n<span class='muted'>{l['tx_date'] or ''}</span> {pill(l['cat'], l.get('dup'))} "
                             f"**{money(l['amt'])}**", unsafe_allow_html=True)
                 v = c2.checkbox("Checked", value=bool(l["ok"]), key=f"tk{l['id']}")
                 if v != bool(l["ok"]):
                     q("UPDATE mum_lines SET ok=%s WHERE id=%s", (v, l["id"]))
                     st.rerun()
                 if c3.button("Edit", key=f"ed{l['id']}"):
-                    q("UPDATE mum_lines SET done=FALSE, ok=FALSE WHERE id=%s", (l["id"],))
+                    q("UPDATE mum_lines SET done=FALSE, ok=FALSE, dup=FALSE, dup_ok=TRUE WHERE id=%s", (l["id"],))
                     st.session_state.pop(f"tk{l['id']}", None)
                     st.rerun()
             if wait_ls:
@@ -758,7 +801,7 @@ with tab4:
 with tab5:
     st.subheader("All records")
     st.caption("Every line from every month in one place, plus the monthly cash for groceries.")
-    rows = q("""SELECT l.month, l.tx_date, l.descr, l.amt, l.cat, l.done, l.ok,
+    rows = q("""SELECT l.month, l.tx_date, l.descr, l.amt, l.cat, l.done, l.ok, l.dup,
                        COALESCE(s.label, 'Added by hand') AS source
                 FROM mum_lines l LEFT JOIN mum_sources s ON s.id = l.source_id
                 ORDER BY l.tx_date NULLS LAST, l.id""", fetch=True)
@@ -769,7 +812,7 @@ with tab5:
     data = [{"Month": r["month"], "Date": r["tx_date"], "Description": r["descr"], "Category": r["cat"] or "",
              "Category name": cat_label(r["cat"]).split(" · ")[-1] if r["cat"] else "Not tagged",
              "Amount": r2(r["amt"]), "Source": r["source"],
-             "Status": "Checked" if (r["done"] and r["ok"]) else "In step 3" if r["done"] else "In step 2"} for r in rows]
+             "Status": "Double entry (left out)" if r["dup"] else "Checked" if (r["done"] and r["ok"]) else "In step 3" if r["done"] else "In step 2"} for r in rows]
     data += [{"Month": m, "Date": date(int(m[:4]), int(m[5:]), 1), "Description": "Cash for groceries (fixed)",
               "Category": "G", "Category name": "Groceries", "Amount": r2(v), "Source": "Cash", "Status": "Checked"}
              for m, v in cash_map.items()]
