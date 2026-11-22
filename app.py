@@ -7,8 +7,8 @@ A fixed cash amount for groceries (default $500) is added to G every month.
 Secrets needed (Streamlit > Settings > Secrets):
   SUPABASE_DB_URL   = "postgresql://..."   (same as the cafe app)
   ANTHROPIC_API_KEY = "sk-ant-..."         (same as the cafe app)
-  APP_PIN           = "1234"               (the PIN Mum types to open the app)
 Optional:
+  APP_PIN           = "1234"               (leave out for no PIN screen)
   ANTHROPIC_MODEL   = "claude-sonnet-5-5"
 """
 import base64
@@ -91,7 +91,8 @@ div[data-testid="stButton"] button{min-height:44px}
 
 # ---------------------------------------------------------------- PIN gate
 def pin_gate():
-    if st.session_state.get("authed"):
+    # No APP_PIN in the secrets = no PIN screen; the app opens straight away.
+    if st.session_state.get("authed") or not str(st.secrets.get("APP_PIN", "")).strip():
         return
     st.title("Mum's monthly spend")
     pin = st.text_input("Enter your PIN", type="password", max_chars=8)
@@ -685,6 +686,6 @@ with st.sidebar:
     st.markdown("1. Pick the month at the top.\n2. **Upload**: statements first, then switch to Utility bill.\n"
                 "3. **Tag**: press ✓ when the letter is right.\n4. **Reconcile**: type each printed total, tick every line.\n"
                 "5. When the stamp says **Reconciled**, download the report.")
-    if st.button("Log out"):
+    if str(st.secrets.get("APP_PIN", "")).strip() and st.button("Log out"):
         st.session_state.authed = False
         st.rerun()

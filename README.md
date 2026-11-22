@@ -17,6 +17,6 @@ Streamlit secrets needed:
 ```
 SUPABASE_DB_URL = "postgresql://..."
 ANTHROPIC_API_KEY = "sk-ant-..."
-APP_PIN = "1234"
 ```
+Optional: `APP_PIN = "1234"` adds a PIN screen.
 GitHub Actions secret needed for the keep-awake job: `SUPABASE_DB_URL`.
