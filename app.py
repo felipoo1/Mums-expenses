@@ -44,11 +44,14 @@ DEFAULT_CASH = 500.0
 
 
 def cat_label(k):
+    k = str(k or "").strip().upper()
     if not k:
         return "- choose -"
     if k == "X":
         return "X · " + XNAME
-    return f"{k} · {CATS[k][0]}"
+    if k in CATS:
+        return f"{k} · {CATS[k][0]}"
+    return f"{k} · (unknown letter)"
 
 
 def money(n):
@@ -180,7 +183,7 @@ def q(sql, params=None, fetch=False):
                 raise
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 @st.cache_resource
@@ -228,6 +231,11 @@ def ensure_schema(_v=SCHEMA_VERSION):
 
 
 def refile():
+    # tidy letters: upper case, and blank out anything that is not a real category so it shows as "choose"
+    q("UPDATE mum_lines SET cat = upper(trim(cat)) WHERE cat <> upper(trim(cat))")
+    q("UPDATE mum_lines SET cat = '', ok = FALSE, done = FALSE WHERE cat <> '' AND cat NOT IN %s",
+      (tuple(CAT_OPTIONS[1:]),))
+    q("DELETE FROM mum_rules WHERE cat NOT IN %s", (tuple(CAT_OPTIONS[1:]),))
     q("""UPDATE mum_lines SET month = to_char(tx_date, 'YYYY-MM')
          WHERE tx_date IS NOT NULL AND month <> to_char(tx_date, 'YYYY-MM')""")
     q("""UPDATE mum_sources s SET month = sub.mm
@@ -440,7 +448,8 @@ def save_reading(m, kind, name, fhash, j, rules):
             if amt <= 0:
                 continue
             desc = str(l.get("desc") or "")
-            cat = rules.get(merch(desc)) or (l.get("cat") if l.get("cat") in CAT_OPTIONS else "")
+            sug = str(l.get("cat") or "").strip().upper()
+            cat = rules.get(merch(desc)) or (sug if sug in CAT_OPTIONS else "")
             d = safe_date(l.get("date"), m)
             q("INSERT INTO mum_lines(month,source_id,tx_date,descr,amt,cat) VALUES(%s,%s,%s,%s,%s,%s)",
               (ym(d), sid, d, desc, amt, cat))
@@ -596,6 +605,7 @@ def pill(k, dup=False):
         return "<span class='pill' style='background:#6b7280'>Double entry · left out</span>"
     if not k:
         return "<span class='bad'>not tagged</span>"
+    k = str(k).strip().upper()
     col = CATS[k][1] if k in CATS else "#6b7280"
     return f"<span class='pill' style='background:{col}'>{cat_label(k)}</span>"
 
