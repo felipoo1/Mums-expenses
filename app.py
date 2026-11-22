@@ -2,7 +2,7 @@
 
 Categories: S Susan (Mum), F Family food, T Transport, G Groceries, U Utilities, M Medical, H Household.
 X = not Mum's spending (left out). Money coming in is never counted.
-A fixed cash amount for groceries (default $500) is added to G every month.
+A fixed cash amount for groceries (default $500) is shown separately as Cash and counted in the month's total.
 
 Secrets needed (Streamlit > Settings > Secrets):
   SUPABASE_DB_URL   = "postgresql://..."   (same as the cafe app)
@@ -306,13 +306,13 @@ def find_doubles():
 def totals(cash, lines):
     t = {k: 0.0 for k in ALLK + ["X", ""]}
     c = {k: 0 for k in ALLK + ["X", ""]}
-    t["G"] += cash
     for l in lines:
         k = l["cat"] if l["cat"] in t else ""
         t[k] += l["amt"]
         c[k] += 1
     t = {k: r2(v) for k, v in t.items()}
-    return t, c, r2(sum(t[k] for k in ALLK))
+    t["CASH"] = r2(cash)          # cash for groceries: its own line, counted in the month total
+    return t, c, r2(sum(t[k] for k in ALLK) + cash)
 
 
 def src_info(sources, lines):
@@ -552,12 +552,14 @@ with st.container(key="zone"):
     left.markdown(f"<div class='muted' style='font-size:15px'>Total spend for {mlabel}</div><div class='big'>{money(SPEND)}</div>"
                   f"<div class='muted'>Includes {money(cash)} cash for groceries. Money coming in is never counted.</div>"
                   f"{stamp}", unsafe_allow_html=True)
-    mx = max([T[k] for k in ALLK] + [1])
+    mx = max([T[k] for k in ALLK] + [T["CASH"], 1])
     right.markdown("".join(
         f"<div class='bar'><span class='k' style='background:{c}'>{k}</span><div class='t'>"
         f"<i style='width:{T[k] / mx * 100:.1f}%;background:{c}33;border-right:3px solid {c}'></i><span>{n}"
-        f"{' · incl. cash' if k == 'G' and cash else ''}</span></div>"
-        f"<span class='v'>{money(T[k])}</span></div>" for k, (n, c) in CATS.items()), unsafe_allow_html=True)
+        f"</span></div><span class='v'>{money(T[k])}</span></div>" for k, (n, c) in CATS.items())
+        + f"<div class='bar'><span class='k' style='background:#475569'>$</span><div class='t'>"
+          f"<i style='width:{T['CASH'] / mx * 100:.1f}%;background:#47556933;border-right:3px solid #475569'></i>"
+          f"<span>Cash for groceries</span></div><span class='v'>{money(T['CASH'])}</span></div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- section menu (remembers where you are)
 VIEWS = ["upload", "check", "year", "all"]
@@ -648,13 +650,13 @@ def report_html():
             f"table{{width:100%;border-collapse:collapse}}td,th{{padding:5px;border-bottom:1px solid #ddd;text-align:left}}"
             f".n{{text-align:right;white-space:nowrap}}.t td{{font-weight:bold;border-top:2px solid #111}}</style></head><body>"
             f"<h1>Mum's monthly spend: reconciliation report, {mlabel}</h1><p>Status: <b>{'Reconciled' if REC else 'Not reconciled yet'}</b>"
-            f" · Prepared {date.today():%d/%m/%Y}</p><h3>Summary by category</h3><table>{rows}<tr class=t><td>Total</td>"
-            f"<td class=n>{money(SPEND)}</td></tr></table><p>G includes {money(cash)} cash for groceries.</p>"
+            f" · Prepared {date.today():%d/%m/%Y}</p><h3>Summary by category</h3><table>{rows}<tr><td>Cash for groceries</td><td class=n>{money(cash)}</td></tr>"
+            f"<tr class=t><td>Total</td><td class=n>{money(SPEND)}</td></tr></table>"
             f"<h2>Line-by-line reconciliation</h2>{srcs}</body></html>")
 
 
 def month_csv():
-    rows = [{"Month": cur, "Category": "G", "Category name": "Groceries", "Date": "", "Description": "Cash for groceries (fixed)",
+    rows = [{"Month": cur, "Category": "Cash", "Category name": "Cash for groceries", "Date": "", "Description": "Cash for groceries (fixed)",
              "Source": "Cash", "Amount": r2(cash), "Checked": "Yes"}]
     names = {s["id"]: s["label"] for s in sources}
     for l in sorted(lines, key=lambda l: (l["cat"] or "~", str(l["tx_date"]))):
@@ -905,6 +907,8 @@ if view == "check":
         st.markdown("**Summary by category**")
         st.markdown("<table style='width:100%'>" + "".join(
             f"<tr><td>{pill(k)}</td><td style='text-align:right'>{money(T[k])}</td></tr>" for k in ALLK) +
+            f"<tr><td><span class='pill' style='background:#475569'>$ · Cash for groceries</span></td>"
+            f"<td style='text-align:right'>{money(cash)}</td></tr>"
             f"<tr><td><b>Total</b></td><td style='text-align:right'><b>{money(SPEND)}</b></td></tr></table>",
             unsafe_allow_html=True)
     with b:
@@ -949,7 +953,7 @@ if view == "year":
         k = f"{y}-{mo:02d}"
         ml = [l for l in ylines if l["month"] == k]
         if not ml and k not in cashmap and k != cur:
-            rows.append({"Month": MN[mo - 1][:3], **{c: None for c in ALLK}, "Total": None, "Status": ""})
+            rows.append({"Month": MN[mo - 1][:3], **{c: None for c in ALLK}, "Cash": None, "Total": None, "Status": ""})
             continue
         mt, mc, mspend = totals(cashmap.get(k, DEFAULT_CASH), ml)
         left = sum(1 for l in ml if not l["ok"] and not l["dup"])
@@ -969,7 +973,7 @@ if view == "year":
             status = "✓ reconciled"
         if bad or left:
             problems.append((k, (no_total, off), left))
-        rows.append({"Month": MN[mo - 1][:3], **{c: mt[c] for c in ALLK}, "Total": mspend, "Status": status})
+        rows.append({"Month": MN[mo - 1][:3], **{c: mt[c] for c in ALLK}, "Cash": mt["CASH"], "Total": mspend, "Status": status})
     if problems:
         st.error(f"⚠ {len(problems)} month(s) need attention")
         for k, bad, left in problems:
@@ -989,9 +993,9 @@ if view == "year":
     else:
         st.success("✓ Every month with data is reconciled.")
     df = pd.DataFrame(rows)
-    for c in ALLK + ["Total"]:
+    for c in ALLK + ["Cash", "Total"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
-    tot = {"Month": "Year", **{c: r2(df[c].fillna(0).sum()) for c in ALLK}, "Total": r2(df["Total"].fillna(0).sum())}
+    tot = {"Month": "Year", **{c: r2(df[c].fillna(0).sum()) for c in ALLK + ["Cash"]}, "Total": r2(df["Total"].fillna(0).sum())}
     df = pd.concat([df, pd.DataFrame([tot])], ignore_index=True)
     def _hl(row):
         s = str(row.get("Status", ""))
@@ -999,13 +1003,13 @@ if view == "year":
              "background-color:#fff4e5" if "to check" in s else ""
         return [bg] * len(row)
     disp = df.copy()
-    for c in ALLK + ["Total"]:
+    for c in ALLK + ["Cash", "Total"]:
         disp[c] = df[c].map(lambda v: "" if pd.isna(v) else f"${v:,.2f}")
     disp["Status"] = disp["Status"].fillna("")
-    st.dataframe(disp.style.apply(_hl, axis=1).set_properties(subset=ALLK + ["Total"], **{"text-align": "right"}),
+    st.dataframe(disp.style.apply(_hl, axis=1).set_properties(subset=ALLK + ["Cash", "Total"], **{"text-align": "right"}),
                  hide_index=True, width="stretch")
-    st.caption("Each month's Total is the same figure as that month's reconciliation total (including the cash for groceries). "
-               "S Susan · F Family food · T Transport · G Groceries (incl. cash) · U Utilities · M Medical · H Household. Empty months show blank.")
+    st.caption("Each month's Total is the same figure as that month's reconciliation total: all categories plus the cash for groceries. "
+               "S Susan · F Family food · T Transport · G Groceries · U Utilities · M Medical · H Household. Empty months show blank.")
     st.download_button("Download year CSV", df.to_csv(index=False), file_name=f"Mum spend {y} by month.csv", mime="text/csv")
 
 # ---------------------------------------------------------------- all records (whole database)
@@ -1025,7 +1029,7 @@ if view == "all":
              "Amount": r2(r["amt"]), "Source": r["source"],
              "Status": "Double entry (left out)" if r["dup"] else "Checked" if r["ok"] else "Not checked yet"} for r in rows]
     data += [{"Month": m, "Date": date(int(m[:4]), int(m[5:]), 1), "Description": "Cash for groceries (fixed)",
-              "Category": "G", "Category name": "Groceries", "Amount": r2(v), "Source": "Cash", "Status": "Checked"}
+              "Category": "Cash", "Category name": "Cash for groceries", "Amount": r2(v), "Source": "Cash", "Status": "Checked"}
              for m, v in cash_map.items()]
     if not data:
         st.info("Nothing saved yet. Upload a statement in step 1.")
@@ -1035,7 +1039,8 @@ if view == "all":
         months_avail = sorted(df["Month"].unique())
         m_from = f1.selectbox("From month", months_avail, index=0)
         m_to = f2.selectbox("To month", months_avail, index=len(months_avail) - 1)
-        cats_pick = st.multiselect("Categories", CAT_OPTIONS, default=ALLK, format_func=lambda k: cat_label(k) if k else "Not tagged")
+        cats_pick = st.multiselect("Categories", CAT_OPTIONS + ["Cash"], default=ALLK + ["Cash"],
+                                   format_func=lambda k: "Cash for groceries" if k == "Cash" else cat_label(k) if k else "Not tagged")
         search = st.text_input("Search description", placeholder="e.g. NTUC, Grab, clinic")
         v = df[(df["Month"] >= m_from) & (df["Month"] <= m_to) & (df["Category"].isin(cats_pick))]
         if search.strip():
