@@ -919,26 +919,33 @@ if view == "year":
             continue
         mt, mc, mspend = totals(cashmap.get(k, DEFAULT_CASH), ml)
         left = sum(1 for l in ml if not l["ok"] and not l["dup"])
-        bad = sorted({docs[l["source_id"]]["label"] for l in ml
-                      if l["source_id"] in docs and doc_problem(docs[l["source_id"]])})
+        bad_ids = {l["source_id"] for l in ml if l["source_id"] in docs and doc_problem(docs[l["source_id"]])}
+        no_total = sorted({docs[i]["label"] for i in bad_ids if docs[i]["printed"] is None})
+        off = sorted({docs[i]["label"] for i in bad_ids if docs[i]["printed"] is not None})
+        bad = no_total + off
         if not ml:
             status = "no lines yet"
-        elif bad:
+        elif off:
             status = "✗ total does not match"
+        elif no_total:
+            status = "printed total not entered"
         elif left:
             status = f"{left} to check"
         else:
             status = "✓ reconciled"
         if bad or left:
-            problems.append((k, bad, left))
+            problems.append((k, (no_total, off), left))
         rows.append({"Month": MN[mo - 1][:3], **{c: mt[c] for c in ALLK}, "Total": mspend, "Status": status})
     if problems:
         st.error(f"⚠ {len(problems)} month(s) need attention")
         for k, bad, left in problems:
             a, b = st.columns([4, 1], vertical_alignment="center")
             why = []
-            if bad:
-                why.append("statement total does not match: " + ", ".join(bad))
+            no_total, off = bad
+            if off:
+                why.append("statement total does not match: " + ", ".join(off))
+            if no_total:
+                why.append("printed total not entered yet: " + ", ".join(no_total))
             if left:
                 why.append(f"{left} line(s) to check")
             a.markdown(f"**{month_name(k)}** · <span class='bad'>{'; '.join(why)}</span>", unsafe_allow_html=True)
