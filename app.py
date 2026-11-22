@@ -1097,17 +1097,16 @@ if view == "all":
         if search.strip():
             v = v[v["Description"].fillna("").str.contains(search.strip(), case=False, regex=False)]
         st.markdown(f"**{len(v)} record(s) · Total {money(v['Amount'].sum())}**")
-        st.caption("✎ Double-click (or double-tap) a Date, Description, Category or Amount to change it. "
+        st.caption("✎ To change a category: double-click (or double-tap) the Category cell and pick the new one. "
                    "It saves straight away. Cash for groceries and double entries cannot be changed here.")
         v = v.set_index("_id")
         ed_key = "rec_" + hashlib.md5(f"{m_from}{m_to}{sorted(cats_pick)}{search}".encode()).hexdigest()[:10]
         edited = st.data_editor(
             v, hide_index=True, width="stretch", key=ed_key,
-            disabled=[c for c in v.columns if c not in ("Date", "Description", "Category", "Amount")],
+            disabled=[c for c in v.columns if c != "Category"],
             column_order=["Month", "Date", "Description", "Category", "Category name", "Amount", "Source", "Status"],
-            column_config={"Amount": st.column_config.NumberColumn("Amount ✎", format="$%.2f", min_value=0.0, step=0.01),
-                           "Date": st.column_config.DateColumn("Date ✎", format="DD/MM/YYYY"),
-                           "Description": st.column_config.TextColumn("Description ✎"),
+            column_config={"Amount": st.column_config.NumberColumn("Amount", format="$%.2f"),
+                           "Date": st.column_config.DateColumn("Date", format="DD/MM/YYYY"),
                            "Category": st.column_config.SelectboxColumn(
                                "Category ✎", options=ALLK + ["X", "Cash"], required=False,
                                format_func=lambda k: "$ · Cash for groceries" if k == "Cash" else cat_label(k),
