@@ -528,7 +528,8 @@ st.session_state.setdefault("pick_y", int(cur[:4]))
 with st.container(key="strip"):
     t, navc = st.columns([2, 3], vertical_alignment="center")
     t.markdown("# Mum's monthly spend")
-    c1, c2, c3, c4 = navc.container(key="mnav").columns([1, 3, 2, 1], vertical_alignment="center", gap="small")
+    c1, c2, c3, c4, c5 = navc.container(key="mnav").columns([1, 3, 2, 1, 1], vertical_alignment="center", gap="small")
+    c5.button("⟳", width="stretch", help="Refresh: show the latest data (for example after Mum uploads on her phone)")
     c1.button("‹", on_click=shift_month, args=(-1,), width="stretch", help="Previous month")
     c2.selectbox("Month", MN, key="pick_m", on_change=pick_changed, label_visibility="collapsed")
     years = sorted({today.year - 2, today.year - 1, today.year, today.year + 1, int(cur[:4])})
@@ -620,7 +621,15 @@ if view == "upload":
                 except Exception as e:  # noqa: BLE001
                     st.error(f"✗ {name}: could not be read. Please try again or use a clearer copy. ({type(e).__name__})")
         st.session_state.up_key += 1
-        st.button("Done, check the lines", type="primary", on_click=lambda: st.session_state.update(view="check"))
+        added = q("""SELECT month, COUNT(*) AS n FROM mum_lines WHERE NOT ok AND NOT dup GROUP BY month ORDER BY month""",
+                  fetch=True)
+        if added:
+            st.markdown("**Now check the lines. They are filed under these months:**")
+            for r in added:
+                k = r["month"]
+                st.button(f"Open {month_name(k)} · {r['n']} to check", key=f"goup{k}", type="primary", width="stretch",
+                          on_click=lambda k=k: st.session_state.update(month=k, pick_m=MN[int(k[5:]) - 1],
+                                                                       pick_y=int(k[:4]), view="check"))
     if sources:
         st.markdown("**Already uploaded this month**")
         for s in SI:
@@ -751,6 +760,16 @@ if view == "check":
                 if chosen and st.button(f"🗑 Delete {len(chosen)} ticked", width="stretch", key="dbl_bottom"):
                     delete_doubles(chosen)
                     st.rerun()
+    elsewhere = q("""SELECT month, COUNT(*) AS n FROM mum_lines
+                     WHERE NOT ok AND NOT dup AND month <> %s GROUP BY month ORDER BY month""", (cur,), True)
+    if elsewhere:
+        st.info("Lines are also waiting in other months (each line is filed under the month of its own date):")
+        cols = st.columns(min(len(elsewhere), 4))
+        for i, r in enumerate(elsewhere):
+            k = r["month"]
+            cols[i % 4].button(f"{month_name(k)} · {r['n']} to check", key=f"goel{k}", width="stretch",
+                               on_click=lambda k=k: st.session_state.update(month=k, pick_m=MN[int(k[5:]) - 1],
+                                                                            pick_y=int(k[:4]), view="check"))
     if lines:
         n_all = sum(1 for l in lines if not l.get("dup"))
         st.markdown(f"**{n_all - OPEN} of {n_all}** lines done" + ("" if OPEN else " <span class='ok'>✓ all done</span>"),
