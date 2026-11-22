@@ -239,13 +239,15 @@ def save_rule(desc, cat):
 
 def find_doubles():
     """Groups of lines (any month) with the same date, amount and shop that are not yet decided."""
-    rows = q("""SELECT l.id, l.month, l.tx_date, l.descr, l.amt, l.cat, l.dup, l.dup_ok,
+    rows = q("""SELECT l.id, l.month, l.tx_date, l.descr, l.amt, l.cat, l.dup, l.dup_ok, l.source_id,
                        COALESCE(s.label, 'Added by hand') AS source, COALESCE(s.name, '') AS file
                 FROM mum_lines l LEFT JOIN mum_sources s ON s.id = l.source_id
-                WHERE NOT l.dup""", fetch=True)
+                WHERE NOT l.dup ORDER BY l.id""", fetch=True)
     groups = {}
     for r in rows:
-        key = (r["tx_date"], r2(r["amt"]), merch(r["descr"]))
+        # a double needs ALL three to match: same date, same amount, same name
+        name = " ".join(str(r["descr"] or "").upper().split())
+        key = (r["tx_date"], r2(r["amt"]), name)
         groups.setdefault(key, []).append(r)
     return [g for g in groups.values() if len(g) > 1 and not all(x["dup_ok"] for x in g)]
 
@@ -546,27 +548,42 @@ with tab2:
                "The line then moves to step 3. X means not Mum's spending.")
     doubles = find_doubles()
     if doubles:
-        st.error(f"⚠ {len(doubles)} possible double entr{'y' if len(doubles) == 1 else 'ies'} found "
-                 "(same date, same amount, same shop). Please check each one.")
-        st.caption("Usually this happens when two statements overlap, for example a 3-month history and a monthly "
-                   "statement. If it is really the same spending twice, leave one copy out. If Mum truly paid twice "
-                   "(for example two rides on the same day), keep both.")
+        extras = [(g[0], r) for g in doubles for r in g[1:]]   # first copy is always kept
+        st.error(f"⚠ {len(extras)} double entr{'y' if len(extras) == 1 else 'ies'} found: "
+                 "same name, same amount and same date.")
+        st.caption("The first copy of each is kept. Tick the extra copies to delete, or press Select all.")
+        b1, b2 = st.columns(2)
+        if b1.button("Select all", width="stretch"):
+            for _, r in extras:
+                st.session_state[f"dsel{r['id']}"] = True
+            st.rerun()
+        if b2.button("Clear selection", width="stretch"):
+            for _, r in extras:
+                st.session_state[f"dsel{r['id']}"] = False
+            st.rerun()
         for gi, g in enumerate(doubles):
             with st.container(border=True):
                 first = g[0]
-                st.markdown(f"**{first['descr']}** · {first['tx_date']:%d/%m/%Y} · **{money(first['amt'])}** "
-                            f"· appears {len(g)} times")
-                for i, r in enumerate(g):
-                    a, b = st.columns([3, 2], vertical_alignment="center")
-                    a.markdown(f"Copy {i + 1}: from **{r['source']}**"
-                               + (f" <span class='muted'>({r['file']})</span>" if r["file"] else ""),
-                               unsafe_allow_html=True)
-                    if b.button("Leave this copy out", key=f"dupx{r['id']}", width="stretch"):
-                        q("UPDATE mum_lines SET dup=TRUE, cat='X', done=TRUE, ok=TRUE WHERE id=%s", (r["id"],))
-                        st.rerun()
-                if st.button("Not a double: keep all copies", key=f"dupok{gi}"):
+                st.markdown(f"**{first['descr']}** · {first['tx_date']:%d/%m/%Y} · **{money(first['amt'])}**")
+                st.markdown(f"<span class='muted'>Keep: copy 1 from {first['source']}</span>", unsafe_allow_html=True)
+                for i, r in enumerate(g[1:], start=2):
+                    st.checkbox(f"Delete copy {i} (from {r['source']})", key=f"dsel{r['id']}")
+                if st.button("These are real, keep all", key=f"dupok{gi}"):
                     q("UPDATE mum_lines SET dup_ok=TRUE WHERE id = ANY(%s)", ([r["id"] for r in g],))
                     st.rerun()
+        chosen = [(k, r) for k, r in extras if st.session_state.get(f"dsel{r['id']}")]
+        if st.button(f"🗑 Delete {len(chosen)} selected double entr{'y' if len(chosen) == 1 else 'ies'}",
+                     type="primary", disabled=not chosen, width="stretch"):
+            for keep, r in chosen:
+                if r["source_id"] is not None and r["source_id"] != keep["source_id"]:
+                    # copy belongs to another statement: keep it on that statement so its printed total
+                    # still matches, but take it out of Mum's spending
+                    q("UPDATE mum_lines SET dup=TRUE, cat='X', done=TRUE, ok=TRUE WHERE id=%s", (r["id"],))
+                else:
+                    q("DELETE FROM mum_lines WHERE id=%s", (r["id"],))
+                st.session_state.pop(f"dsel{r['id']}", None)
+            st.success(f"Deleted {len(chosen)} double entr{'y' if len(chosen) == 1 else 'ies'}.")
+            st.rerun()
     todo = [l for l in lines if not l["done"]]
     if lines:
         st.markdown(f"**{len(todo)} line(s) waiting** · {len(lines) - len(todo)} done and moved to step 3")
