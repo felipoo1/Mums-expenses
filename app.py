@@ -266,11 +266,37 @@ Reply with only JSON in this shape:
 amount = this bill's current charges for the period including GST, as a positive number with no currency sign. Do not add overdue balances from earlier bills. If unreadable use null. Never invent values."""
 
 
+def pdf_text(data):
+    """Pull the text out of a downloaded (digital) PDF, keeping the column layout.
+    Returns "" for scanned PDFs that are only pictures."""
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(data))
+        pages = []
+        for i, page in enumerate(reader.pages):
+            try:
+                t = page.extract_text(extraction_mode="layout")
+            except Exception:  # noqa: BLE001
+                t = page.extract_text() or ""
+            pages.append(f"===== Page {i + 1} =====\n{t}")
+        text = "\n".join(pages)
+        return text if len(re.sub(r"\s", "", text)) > 100 else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def file_blocks(files):
     blocks = []
     for f in files:
         data = f.getvalue()
         if f.name.lower().endswith(".pdf") or f.type == "application/pdf":
+            text = pdf_text(data)
+            if text:
+                blocks.append({"type": "text", "text": (
+                    f"Text of the PDF file {f.name}, copied exactly from the document. Columns are kept in place "
+                    "by spacing, so use the column headings (for example Withdrawal / Deposit, or Debit / Credit) "
+                    "to tell money out from money in.\n\n" + text)})
+                continue
             blocks.append({"type": "document", "source": {"type": "base64", "media_type": "application/pdf",
                                                           "data": base64.b64encode(data).decode()}})
         else:
@@ -298,7 +324,7 @@ def read_with_claude(files, kind):
     client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
     model = st.secrets.get("ANTHROPIC_MODEL", "claude-sonnet-5-5")
     content = file_blocks(files) + [{"type": "text", "text": PROMPT_BILL if kind == "bill" else PROMPT_STATEMENT}]
-    resp = client.messages.create(model=model, max_tokens=16000,
+    resp = client.messages.create(model=model, max_tokens=16000, timeout=300,
                                   messages=[{"role": "user", "content": content}])
     text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
     return parse_json(text)

@@ -3,3 +3,4 @@ pandas
 anthropic>=0.40
 psycopg2-binary
 pillow
+pypdf
