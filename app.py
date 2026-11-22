@@ -1097,34 +1097,51 @@ if view == "all":
         if search.strip():
             v = v[v["Description"].fillna("").str.contains(search.strip(), case=False, regex=False)]
         st.markdown(f"**{len(v)} record(s) · Total {money(v['Amount'].sum())}**")
-        st.caption("Tap a Category to change its letter. It saves straight away. "
-                   "(Cash for groceries and double entries cannot be changed here.)")
+        st.caption("✎ Double-click (or double-tap) a Date, Description, Category or Amount to change it. "
+                   "It saves straight away. Cash for groceries and double entries cannot be changed here.")
         v = v.set_index("_id")
         ed_key = "rec_" + hashlib.md5(f"{m_from}{m_to}{sorted(cats_pick)}{search}".encode()).hexdigest()[:10]
         edited = st.data_editor(
             v, hide_index=True, width="stretch", key=ed_key,
-            disabled=[c for c in v.columns if c != "Category"],
+            disabled=[c for c in v.columns if c not in ("Date", "Description", "Category", "Amount")],
             column_order=["Month", "Date", "Description", "Category", "Category name", "Amount", "Source", "Status"],
-            column_config={"Amount": st.column_config.NumberColumn("Amount", format="$%.2f"),
-                           "Date": st.column_config.DateColumn("Date", format="DD/MM/YYYY"),
+            column_config={"Amount": st.column_config.NumberColumn("Amount ✎", format="$%.2f", min_value=0.0, step=0.01),
+                           "Date": st.column_config.DateColumn("Date ✎", format="DD/MM/YYYY"),
+                           "Description": st.column_config.TextColumn("Description ✎"),
                            "Category": st.column_config.SelectboxColumn(
                                "Category ✎", options=ALLK + ["X", "Cash"], required=False,
                                format_func=lambda k: "$ · Cash for groceries" if k == "Cash" else cat_label(k),
                                help="S Susan · F Family food · T Transport · G Groceries · U Utilities · "
                                     "M Medical · H Household · X not Mum's")})
         changed = 0
-        for rid, new in edited["Category"].items():
-            old = v.at[rid, "Category"]
-            if (new or "") == (old or ""):
-                continue
-            if not str(rid).startswith("L") or v.at[rid, "Status"].startswith("Double") or new == "Cash":
+        for rid in edited.index:
+            if not str(rid).startswith("L") or str(v.at[rid, "Status"]).startswith("Double"):
                 continue   # cash rows and left-out doubles are not editable here
             lid = int(str(rid)[1:])
-            new = str(new or "").strip().upper()
-            q("UPDATE mum_lines SET cat=%s" + (", ok=FALSE, done=FALSE" if not new else "") + " WHERE id=%s", (new, lid))
-            if new:
-                save_rule(v.at[rid, "Description"], new)
-            changed += 1
+            old, new = v.loc[rid], edited.loc[rid]
+            sets, args = [], []
+            nc, oc = str(new["Category"] or "").strip().upper(), str(old["Category"] or "")
+            if nc != oc and nc != "CASH":
+                sets.append("cat=%s"); args.append(nc)
+                if not nc:
+                    sets.append("ok=FALSE, done=FALSE")
+                else:
+                    save_rule(new["Description"], nc)
+            if str(new["Description"] or "") != str(old["Description"] or "") and str(new["Description"] or "").strip():
+                sets.append("descr=%s"); args.append(str(new["Description"]).strip())
+            try:
+                na = r2(new["Amount"])
+            except Exception:  # noqa: BLE001
+                na = r2(old["Amount"])
+            if na != r2(old["Amount"]) and na > 0:
+                sets.append("amt=%s"); args.append(na)
+            nd = pd.to_datetime(new["Date"], errors="coerce")
+            od = pd.to_datetime(old["Date"], errors="coerce")
+            if pd.notna(nd) and (pd.isna(od) or nd.date() != od.date()):
+                sets.append("tx_date=%s, month=%s"); args += [nd.date(), ym(nd.date())]
+            if sets:
+                q("UPDATE mum_lines SET " + ", ".join(sets) + " WHERE id=%s", (*args, lid))
+                changed += 1
         if changed:
             st.toast(f"Saved {changed} change(s)")
             st.rerun()
